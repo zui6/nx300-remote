@@ -1,0 +1,18 @@
+# 构建产物
+build/
+*.o
+*.obj
+*.lto.o
+
+# 内存/调试转储
+mem*.bin
+*.raw
+*.etl
+
+# 工具链缓存
+.zig-cache/
+zig-out/
+
+# 系统垃圾
+Thumbs.db
+.DS_Store
