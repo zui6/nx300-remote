@@ -46,6 +46,7 @@ static int pid_is_camera(int pid)
     return ok;
 }
 
+int params_find_pid(void);
 static int find_camera_pid(void)
 {
     DIR *d;
@@ -145,4 +146,9 @@ int params_read(struct cam_params *p)
     }
 
     return 0;
+}
+
+int params_find_pid(void)
+{
+    return find_camera_pid();
 }
