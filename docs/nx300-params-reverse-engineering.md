@@ -162,3 +162,32 @@ WB 切换会改变一组 float32 增益：
 | 27 | 0x4df654 | kelvin | 6000 |
 | 55 | 0x4df6cc | drive | 0=单张 |
 | 76 | 0x4df720 | metering | 2=中央重点 |
+## AF 区域（实验确认）
+
+```
+0x4df68c (索引 40)   1 = 多区   0 = 选择AF
+0x4df7a4 (索引 116)  1 = 处于"选择AF"模式（跟随开关）
+```
+
+## UI 层逆向尝试
+
+符号表里有完整的绘制函数：
+
+```
+CAPPGUIHdmiPlaybackState::DrawEXIFAv     0xe54d0
+CAPPGUIHdmiPlaybackState::DrawEXIFTv     0xe55e4
+CAPPGUIHdmiPlaybackState::DrawEXIFIso    0xe56dc
+CAPPGUIHdmiPlaybackState::DrawEXIFMetering 0xe5830
+CAPPGUIHdmiPlaybackState::DrawEXIFWB     0xe5bc4
+CAPPGUIHdmiPlaybackState::DrawEXIFEV     0xe5da0
+CAPPGUIHdmiPlaybackState::DrawEXIFPW     0xe5fe0   (照片风格)
+CAPPGUIHdmiPlaybackState::DrawEXIFPhotoSize 0xe5ffc
+CApex::ChangeTv / ChangeAv / ConvertTvToRational ...
+```
+
+但这些是**回放界面**（读图片 EXIF），不读实时设置。
+实时 OSD 走的是同一套"控制信息注册表"（`UI_Initialize_Control_Info`，
+里面引用字段地址 69 次），仍然是按索引访问。
+
+结论：UI 层没有"直接读字段"的代码，字段语义只能靠实验确认。
+好消息是实验成本已降到一次设置改动 + 两次 HTTP 请求。

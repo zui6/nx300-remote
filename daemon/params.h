@@ -5,6 +5,7 @@ struct cam_params {
     int pid;
     int iso;
     int iso_max;
+    int af_area;
     unsigned int shutter_num;
     unsigned int shutter_den;
     unsigned int aperture10;
@@ -13,5 +14,6 @@ struct cam_params {
 };
 
 int params_read(struct cam_params *p);
+int params_find_pid(void);
 
 #endif

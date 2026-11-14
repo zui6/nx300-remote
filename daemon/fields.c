@@ -49,6 +49,7 @@ const char *field_name(unsigned long addr)
         case 0x4df654: return "kelvin";
         case 0x4df6cc: return "drive";
         case 0x4df720: return "metering";
+        case 0x4df68c: return "af_area";
         default: return NULL;
     }
 }
