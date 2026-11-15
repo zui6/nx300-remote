@@ -187,6 +187,22 @@ static void handle_osd_api(struct mg_connection *nc,
 {
     if (mg_ncasecmp(func->p, "get", 3) == 0) {
         osd_http_send(nc, hm);
+    } else if (mg_ncasecmp(func->p, "snap", 4) == 0) {
+        /* 按需抓一张屏幕（含 OSD 按钮位置），用于预览界面叠加。
+         * 抓屏约 0.6s，会阻塞 daemon，所以只在客户端显式请求时调用。 */
+        unsigned char *buf = NULL;
+        unsigned long len = 0;
+        if (screen_capture_jpeg(60, 2, &buf, &len) == 0 && buf != NULL && len > 0) {
+            mg_printf(nc, "HTTP/1.1 200 OK\r\nX-NX-Rebuilt: 1\r\n"
+                          "Content-Type: image/jpeg\r\n"
+                          "Access-Control-Allow-Origin: *\r\n"
+                          "Content-Length: %lu\r\n\r\n", len);
+            mg_send(nc, buf, (int) len);
+            free(buf);
+        } else {
+            if (buf != NULL) free(buf);
+            mg_printf(nc, "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n");
+        }
     }
 }
 

@@ -506,3 +506,32 @@ daemon --pipe--> nx-input-injector (libxdo) --> X server --> 相机 UI
 ```
 
 注入器支持：`mousemove x y` / `mousedown N` / `mouseup N` / `key ...` / `keydown` / `keyup`
+## 取景优化与电脑端预览
+
+### NEON
+
+libjpeg 用 `-mfpu=neon -mfloat-abi=softfp` 重编（需给 `jmorecfg.h`/`jpegint.h`/`jpeglib.h`
+等加 include guard，原版头文件没有），链接 `build/simdobj` 里的 NEON 实现
+（排除 `jsimd_stub.o` 和 `jsimd_neon.o`，后者与 C 实现重复定义）。
+
+效果（PC 侧 keep-alive 实测）：
+
+| 档位 | 优化前 | 优化后 |
+|---|---|---|
+| 流畅 (scale3) | 21.7 fps | 20.1 fps |
+| 标准 (scale2) | 11.7 fps | 13.7 fps |
+| 清晰 (scale1) | 8.5 fps | 10.9 fps |
+
+### OSD 叠加（按需）
+
+`GET /api/v1/osd/snap` —— 抓一张 800x480 屏幕 JPEG（含按钮/参数条），耗时约 2s。
+只应在客户端显式请求时调用，**不能每帧抓**（会卡死）。
+
+预览器按 O 键抓一次并缓存，用 `ImageChops.lighter` 叠在取景图上，
+这样就能看到 MENU / Fn 等按钮的位置，避免误点。
+
+### 电脑端预览器
+
+`viewer/nx300_view.py`：显示实时取景、帧率、往返延迟；点击画面设对焦点。
+
+按键：1/2/3 切画质、O 显示/隐藏相机界面、空格暂停、ESC 退出
