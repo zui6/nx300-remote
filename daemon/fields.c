@@ -41,19 +41,41 @@ static int vm_read(int pid, unsigned long addr, void *buf, size_t len)
 const char *field_name(unsigned long addr)
 {
     switch (addr) {
-        case 0x4df5b8: return "tv16";
+        /* 曝光相关 */
+        case 0x4df5c0: return "ae_lock";
+        case 0x4df5c8: return "ev";
+        case 0x4df5cc: return "av_tv_sel";
         case 0x4df5dc: return "shutter";
-        case 0x4df5e2: return "aperture";
+        case 0x4df5e0: return "fno";
         case 0x4df5e4: return "av16";
+        case 0x4df5e8: return "shutter_info";
+        case 0x4df5ec: return "lock3a";
+        case 0x4df5f0: return "flash";
+        /* AF */
+        case 0x4df608: return "af_area_ref";
+        case 0x4df68c: return "af_area";
+        case 0x4df6b8: return "mf_aid";
+        /* ISO */
+        case 0x4df648: return "iso_idx";
+        case 0x4df64c: return "iso_idx_max";
+        case 0x4df72c: return "iso_step";
+        /* 白平衡 */
         case 0x4df650: return "wb";
         case 0x4df654: return "kelvin";
-        case 0x4df6cc: return "drive";
+        case 0x4df658: return "wb_value";
+        case 0x4df61c: return "wb_custom";
+        /* 照片风格 */
+        case 0x4df678: return "pw1";
+        case 0x4df67c: return "pw2";
+        case 0x4df680: return "pw3";
+        case 0x4df684: return "pw4";
+        /* 测光 / 驱动 */
+        case 0x4df6c0: return "meter_spot";
         case 0x4df720: return "metering";
-        case 0x4df68c: return "af_area";
+        case 0x4df6cc: return "drive";
         default: return NULL;
     }
 }
-
 int fields_read_all(struct field_dump *out)
 {
     unsigned int table[MAX_FIELDS];

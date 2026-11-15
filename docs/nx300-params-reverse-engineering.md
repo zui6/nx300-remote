@@ -231,3 +231,55 @@ e scr.color=0
 
 要拿到"索引 → 语义"，只能看**调用方传入的常量索引**，
 而调用方本身也是按索引传参的通用逻辑，所以仍然需要实验兜底。
+## Ghidra 逆向（最终突破）
+
+REA 自带的 Ghidra 在这台机器上不可用（调用超时、进程根本不启动），
+改为**自己装 Ghidra 12.2 到 D 盘跑 headless**：
+
+```
+D:\tools\ghidra\ghidra_12.2_PUBLIC\support\analyzeHeadless.bat
+  <proj> nx300 -import di-camera-app-nx300 \
+  -postScript DumpAccessor.java <out> -scriptPath <scripts>
+```
+
+3.2MB ARM 二进制，自动分析约 **147 秒**。
+
+### 拿到的关键结构
+
+```
+UI_Get_Value_Pointer_Capture_Menu(eUI_VALUE_ITEM)   @ 0x15623c
+  case N -> DAT_00156cXX  (字段指针表)
+UI_Get_Value(id)  @ 0x168618
+UI_Set_Value(id, v) @ 0x168758
+  -> UI_Set_DB_Value_Capture_Menu(db_id, v)   // 同时写 prefman DB
+```
+
+把「调用点常量索引」和「case → 字段地址」join 起来，
+就得到 **字段语义**——这是实验法几十次都换不来的。
+
+### 结果
+
+- 5395 个调用点，442 个不同索引
+- **118 个字段**有明确语义线索 → `docs/nx300-field-map.md`
+- 已内置到 daemon 命名的：**26 个**
+
+### 验证（与实验完全吻合）
+
+| 参数 | 地址 | case | 实验值 | 反编译函数 |
+|---|---|---|---|---|
+| 白平衡 | 0x4df650 | 0x1c | 3=荧光 | set_white_balance |
+| 驱动 | 0x4df6cc | 0x37 | 1=高速连拍 | UI_Check_Single_Drive |
+| 测光 | 0x4df720 | 0x4d | 2=中央重点 | set_metering_spot_target |
+| AF 区域 | 0x4df68c | 0x2b | 1=多区 | set_af_area |
+
+### 新发现的参数
+
+| 参数 | 地址 | 函数 |
+|---|---|---|
+| EV 补偿 | 0x4df5c8 | set_ev |
+| 闪光灯 | 0x4df5f0 | set_flash |
+| ISO 索引 | 0x4df648 | set_iso |
+| ISO 步进 | 0x4df72c | UpdateDiskIsoStep |
+| 白平衡值 | 0x4df658 | set_white_balance |
+| 照片风格 | 0x4df678-684 | set_gg_picture_wizard |
+| MF 辅助 | 0x4df6b8 | set_mf_foucs_aid |
