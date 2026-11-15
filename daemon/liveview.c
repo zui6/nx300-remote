@@ -241,6 +241,88 @@ void liveview_http_send_jpeg(struct mg_connection *nc, int quality, int scale, i
     print_log("jpeg q=%d scale=%d src=%dx%d -> %lu bytes in %lld ms",
               quality, scale, frame_width, frame_height, len, t1 - t0);
 }
+
+/* 原始 NV12 通道：只降采样，不编码。客户端自己做 YUV->RGB。 */
+void liveview_http_send_raw(struct mg_connection *nc, int scale)
+{
+    static unsigned char *s_rbuf = NULL;
+    static size_t s_rcap = 0;
+    int fw, fh, fsz, ow, oh, x, y;
+    size_t need;
+    long long t0, t1;
+
+    liveview_get(false, &fw, &fh, &fsz);
+    if (s_nv12_mem == NULL) {
+        mg_printf(nc, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+        return;
+    }
+    if (scale < 1) scale = 1;
+    if (scale > 4) scale = 4;
+
+    ow = (fw / scale) & ~1;
+    oh = (fh / scale) & ~1;
+    if (ow < 16 || oh < 16) {
+        mg_printf(nc, "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n");
+        return;
+    }
+
+    t0 = get_current_time();
+
+    if (scale == 1) {
+        /* 原样发送，零拷贝 */
+        size_t len = (size_t) ow * oh * 3 / 2;
+        mg_printf(nc, "HTTP/1.1 200 OK\r\n"
+                      "Content-Type: application/octet-stream\r\n"
+                      "X-NX-Width: %d\r\nX-NX-Height: %d\r\nX-NX-Format: nv12\r\n"
+                      "Content-Length: %d\r\n"
+                      "Access-Control-Allow-Origin: *\r\n\r\n",
+                  ow, oh, (int) len);
+        mg_send(nc, s_nv12_mem, (int) len);
+        return;
+    }
+
+    need = (size_t) ow * oh + 2u * (size_t) (ow / 2) * (oh / 2);
+    if (need > s_rcap) {
+        unsigned char *n = (unsigned char *) realloc(s_rbuf, need);
+        if (n == NULL) {
+            mg_printf(nc, "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n");
+            return;
+        }
+        s_rbuf = n;
+        s_rcap = need;
+    }
+
+    /* Y：按 scale 抽点 */
+    for (y = 0; y < oh; y++) {
+        const unsigned char *src = s_nv12_mem + (size_t) (y * scale) * fw;
+        unsigned char *dst = s_rbuf + (size_t) y * ow;
+        for (x = 0; x < ow; x++) dst[x] = src[x * scale];
+    }
+    /* UV：交错采样 */
+    {
+        const unsigned char *uv = s_nv12_mem + (size_t) fw * fh;
+        unsigned char *dst = s_rbuf + (size_t) ow * oh;
+        for (y = 0; y < oh / 2; y++) {
+            const unsigned char *src = uv + (size_t) (y * scale) * fw;
+            for (x = 0; x < ow / 2; x++) {
+                dst[x * 2] = src[(x * scale) * 2];
+                dst[x * 2 + 1] = src[(x * scale) * 2 + 1];
+            }
+            dst += ow;
+        }
+    }
+
+    t1 = get_current_time();
+    mg_printf(nc, "HTTP/1.1 200 OK\r\n"
+                  "Content-Type: application/octet-stream\r\n"
+                  "X-NX-Width: %d\r\nX-NX-Height: %d\r\nX-NX-Format: nv12\r\n"
+                  "Content-Length: %d\r\n"
+                  "Access-Control-Allow-Origin: *\r\n\r\n",
+              ow, oh, (int) need);
+    mg_send(nc, s_rbuf, (int) need);
+    print_log("raw scale=%d %dx%d -> %u bytes in %lld ms", scale, ow, oh, (unsigned) need, t1 - t0);
+}
+
 void liveview_http_send_ui_jpeg(struct mg_connection *nc, int quality, int scale,
                                 int expand_range, int refresh)
 {
