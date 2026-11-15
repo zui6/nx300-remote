@@ -11,6 +11,8 @@ struct cam_params {
     int drive;
     int quality;
     int pw;
+    int af_mode;
+    int flash;
     unsigned int shutter_num;
     unsigned int shutter_den;
     unsigned int aperture10;

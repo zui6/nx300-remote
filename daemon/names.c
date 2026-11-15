@@ -80,3 +80,26 @@ const char *name_picture_wizard(int v)
     if (v < 0 || v >= COUNT(PW_NAMES)) return NULL;
     return PW_NAMES[v];
 }
+
+/* AF 模式：set_af_mode 图标顺序 (single/continuous/manual) */
+static const char *const AF_MODE_NAMES[] = {
+    "单一 AF", "连续 AF", "手动对焦"
+};
+
+/* 闪光灯：set_flash 图标表 0x224654，16 项 = 8 模式 × 2 */
+static const char *const FLASH_NAMES[] = {
+    "关", "自动", "自动消减红眼", "强制闪光",
+    "强制闪光+红眼消除", "前帘同步", "后帘同步", "智能闪光"
+};
+
+const char *name_af_mode(int v)
+{
+    if (v < 0 || v >= COUNT(AF_MODE_NAMES)) return NULL;
+    return AF_MODE_NAMES[v];
+}
+
+const char *name_flash(int v)
+{
+    if (v < 0 || v >= COUNT(FLASH_NAMES)) return NULL;
+    return FLASH_NAMES[v];
+}

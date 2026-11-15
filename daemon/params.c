@@ -127,6 +127,8 @@ int params_read(struct cam_params *p)
         p->wb       = (read_mem(pid, 0x4df650UL, &v, sizeof(v)) == (int) sizeof(v)) ? (int) v : -1;
         p->metering = (read_mem(pid, 0x4df720UL, &v, sizeof(v)) == (int) sizeof(v)) ? (int) v : -1;
         p->drive    = (read_mem(pid, 0x4df6ccUL, &v, sizeof(v)) == (int) sizeof(v)) ? (int) v : -1;
+        p->af_mode  = (read_mem(pid, 0x4df688UL, &v, sizeof(v)) == (int) sizeof(v)) ? (int) v : -1;
+        p->flash    = (read_mem(pid, 0x4df718UL, &v, sizeof(v)) == (int) sizeof(v)) ? (int) v : -1;
         p->quality  = (read_mem(pid, 0x4df640UL, &v, sizeof(v)) == (int) sizeof(v)) ? (int) v : -1;
         p->pw       = (read_mem(pid, 0x4df674UL, &v, sizeof(v)) == (int) sizeof(v)) ? (int) v : -1;
     }
