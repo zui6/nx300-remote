@@ -6,6 +6,8 @@
 #include "liveview.h"
 #include "screen_jpeg.h"
 #include "params.h"
+#include "fields.h"
+#include "names.h"
 #include "mongoose.h"
 #include "network.h"
 #include "nx_model.h"
@@ -218,6 +220,64 @@ static void handle_input_api(struct mg_connection *nc,
     } else if (mg_vcmp(func, "inject_keep_alive") == 0) {
         input_inject_keep_alive();
         send_200(nc);
+    } else if (mg_ncasecmp(func->p, "touch?", 6) == 0) {
+        /* 触摸点击：移动 + 按下 + 抬起，相机 UI 会当成手指触摸，
+         * 在全屏取景下就是"点这里对焦"。 */
+        char xbuf[16], ybuf[16], cmd[64];
+        int x = 0, y = 0;
+
+        if (mg_get_http_var(&hm->query_string, "x", xbuf, sizeof(xbuf)) > 0)
+            x = atoi(xbuf);
+        if (mg_get_http_var(&hm->query_string, "y", ybuf, sizeof(ybuf)) > 0)
+            y = atoi(ybuf);
+
+        if (x > 0 && y > 0) {
+            snprintf(cmd, sizeof(cmd), "mousemove %d %d", x, y);
+            input_inject(cmd);
+            input_inject("mousedown 1");
+            input_inject("mouseup 1");
+            print_log("touch %d %d", x, y);
+            send_200(nc);
+        } else {
+            mg_printf(nc, "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n");
+        }
+    } else if (mg_ncasecmp(func->p, "focus?", 6) == 0) {
+        /* 对焦到预览图上的某点。
+         * 入参 x,y 是 800x480 预览坐标；内部换算成屏幕点击坐标再注入。
+         * 换算系数由实机标定：
+         *   AF_x = 0.9092*click_y - 9.9
+         *   AF_y = -0.9487*click_x + 419.1
+         * 可点区域实测约 x∈[40,470] y∈[100,770]（480x800 竖屏）。 */
+        char xbuf[16], ybuf[16], cmd[64];
+        int px = -1, py = -1, cx, cy;
+
+        if (mg_get_http_var(&hm->query_string, "x", xbuf, sizeof(xbuf)) > 0)
+            px = atoi(xbuf);
+        if (mg_get_http_var(&hm->query_string, "y", ybuf, sizeof(ybuf)) > 0)
+            py = atoi(ybuf);
+
+        if (px >= 0 && py >= 0) {
+            /* 完全照搬原版 web UI (web_root/js/mouseinput.js) 对 NX300 的处理：
+             *   click_x = 480 - canvas_y
+             *   click_y = canvas_x
+             * canvas 是 800x480（横屏取景），X 屏幕是 480x800（竖屏）。 */
+            cx = 480 - py;
+            cy = px;
+            if (cx < 0) cx = 0;
+            if (cx > 479) cx = 479;
+            if (cy < 0) cy = 0;
+            if (cy > 799) cy = 799;
+            snprintf(cmd, sizeof(cmd), "mousemove %d %d", cx, cy);
+            input_inject(cmd);
+            usleep(120000);          /* 相机 UI 需要时间处理移动 */
+            input_inject("mousedown 1");
+            usleep(80000);
+            input_inject("mouseup 1");
+            print_log("focus preview(%d,%d) -> click(%d,%d)", px, py, cx, cy);
+            send_200(nc);
+        } else {
+            mg_printf(nc, "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n");
+        }
     }
 }
 
@@ -232,6 +292,7 @@ static void ev_handler(struct mg_connection *nc, int ev, void *p)
     static const struct mg_str liveview_prefix = MG_MK_STR("liveview/");
     static const struct mg_str param_prefix = MG_MK_STR("/api/v1/param");
 static const struct mg_str params_prefix = MG_MK_STR("/api/v1/params");
+static const struct mg_str fields_prefix = MG_MK_STR("/api/v1/fields");
     static const struct mg_str osd_prefix = MG_MK_STR("osd/");
     static const struct mg_str input_prefix = MG_MK_STR("input/");
     static const struct mg_str lcd_prefix = MG_MK_STR("lcd/");
@@ -258,16 +319,62 @@ static const struct mg_str params_prefix = MG_MK_STR("/api/v1/params");
             print_log("CLOSE");
             break;
         case MG_EV_HTTP_REQUEST:
+            if (hm->uri.len == fields_prefix.len &&
+                memcmp(hm->uri.p, fields_prefix.p, fields_prefix.len) == 0) {
+                static struct field_dump fd;
+                static char jbuf[16384];
+                if (fields_read_all(&fd) == 0) {
+                    int i, used;
+                    used = snprintf(jbuf, sizeof(jbuf),
+                                    "{\"pid\":%d,\"count\":%d,\"items\":[", fd.pid, fd.count);
+                    for (i = 0; i < fd.count && used < (int) sizeof(jbuf) - 80; i++) {
+                        used += snprintf(jbuf + used, sizeof(jbuf) - used,
+                                         "%s{\"i\":%d,\"a\":%lu,\"v\":%u",
+                                         i ? "," : "", i, fd.items[i].addr, fd.items[i].value);
+                        if (fd.items[i].name != NULL)
+                            used += snprintf(jbuf + used, sizeof(jbuf) - used,
+                                             ",\"n\":\"%s\"", fd.items[i].name);
+                        used += snprintf(jbuf + used, sizeof(jbuf) - used, "}");
+                    }
+                    used += snprintf(jbuf + used, sizeof(jbuf) - used, "]}");
+                    mg_printf(nc, "HTTP/1.1 200 OK\r\nX-NX-Rebuilt: 1\r\n"
+                                  "Content-Type: application/json\r\n"
+                                  "Access-Control-Allow-Origin: *\r\n"
+                                  "Content-Length: %d\r\n\r\n", used);
+                    mg_send(nc, jbuf, used);
+                } else {
+                    mg_printf(nc, "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n");
+                }
+                break;
+            }
             if (hm->uri.len == params_prefix.len &&
                 memcmp(hm->uri.p, params_prefix.p, params_prefix.len) == 0) {
                 struct cam_params cp;
-                char js[256];
+                char js[512];
                 if (params_read(&cp) == 0) {
-                    snprintf(js, sizeof(js),
-                             "{\"iso\":%d,\"iso_max\":%d,\"shutter_num\":%u,"
-                             "\"shutter_den\":%u,\"aperture10\":%u,\"tv16\":%u,\"av16\":%u}",
-                             cp.iso, cp.iso_max, cp.shutter_num, cp.shutter_den,
-                             cp.aperture10, cp.tv16, cp.av16);
+                    const char *nwb = name_wb(cp.wb);
+                    const char *nmt = name_metering(cp.metering);
+                    const char *naf = name_af_area(cp.af_area);
+                    const char *ndr = name_drive(cp.drive);
+                    int used = snprintf(js, sizeof(js),
+                             "{\"iso\":%d,\"iso_max\":%d,\"af_area\":%d,\"shutter_num\":%u,"
+                             "\"shutter_den\":%u,\"aperture10\":%u,\"tv16\":%u,\"av16\":%u,"
+                             "\"wb\":%d,\"metering\":%d,\"drive\":%d,\"quality\":%d,\"pw\":%d,\"af_mode\":%d,\"flash\":%d,\"touch_af\":%d",
+                             cp.iso, cp.iso_max, cp.af_area, cp.shutter_num, cp.shutter_den,
+                             cp.aperture10, cp.tv16, cp.av16,
+                             cp.wb, cp.metering, cp.drive, cp.quality, cp.pw, cp.af_mode, cp.flash, cp.touch_af);
+                    if (nwb) used += snprintf(js + used, sizeof(js) - used, ",\"wb_name\":\"%s\"", nwb);
+                    if (nmt) used += snprintf(js + used, sizeof(js) - used, ",\"metering_name\":\"%s\"", nmt);
+                    if (naf) used += snprintf(js + used, sizeof(js) - used, ",\"af_area_name\":\"%s\"", naf);
+                    if (ndr) used += snprintf(js + used, sizeof(js) - used, ",\"drive_name\":\"%s\"", ndr);
+                    { const char *nq = name_quality(cp.quality); const char *np = name_picture_wizard(cp.pw);
+                      if (nq) used += snprintf(js + used, sizeof(js) - used, ",\"quality_name\":\"%s\"", nq);
+                      if (np) used += snprintf(js + used, sizeof(js) - used, ",\"pw_name\":\"%s\"", np);
+                      { const char *nam = name_af_mode(cp.af_mode); const char *nfl = name_flash(cp.flash);
+                        if (nam) used += snprintf(js + used, sizeof(js) - used, ",\"af_mode_name\":\"%s\"", nam);
+                        if (nfl) used += snprintf(js + used, sizeof(js) - used, ",\"flash_name\":\"%s\"", nfl);
+                        { const char *ntr = name_touch_af(cp.touch_af); if (ntr) used += snprintf(js + used, sizeof(js) - used, ",\"touch_af_name\":\"%s\"", ntr); } } }
+                    snprintf(js + used, sizeof(js) - used, "}");
                     mg_printf(nc, "HTTP/1.1 200 OK\r\nX-NX-Rebuilt: 1\r\n"
                                   "Content-Type: application/json\r\n"
                                   "Access-Control-Allow-Origin: *\r\n"

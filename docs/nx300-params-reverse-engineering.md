@@ -450,3 +450,59 @@ Ghidra 佐证：`UI_Check_Tracking_Win_Enable()` 里只有 `UI_Get_Value(0x31)==
 ### 尚未定位
 - 触摸 AF（开/关）
 - AF 点（中心/用户自选）—— 坐标在 0x4df694/0x4df698
+## 触摸对焦（点屏幕设置对焦点）
+
+### 原版实现
+
+原版 web UI 的 `web_root/js/mouseinput.js` 里就是全部逻辑：
+
+```js
+MouseInput.prototype.onMouseMove = function (x, y) {
+    if (this.controller.isNx300()) {
+        var temp = y;
+        y = x;
+        x = 480 - temp;      // click_x = 480 - canvas_y
+    }                        // click_y = canvas_x
+    // -> /api/v1/input/inject?mousemove=<x>-<y>
+}
+```
+
+画布是 800x480（横屏取景），X 屏幕是 480x800（竖屏），
+所以只要做一次 90° 旋转即可，相机自己会把点击位置映射到对焦框。
+
+### 实现
+
+daemon 新增接口：
+
+```
+GET /api/v1/input/focus?x=<0..799>&y=<0..479>
+```
+
+内部换算 `click = (480 - y, x)`，然后向注入器依次发：
+
+```
+mousemove <cx> <cy>
+mousedown 1
+mouseup 1
+```
+
+（中间各留 120ms / 80ms，相机 UI 需要时间处理）
+
+### 验证（实机）
+
+| 画布坐标 | 对焦框坐标 |
+|---|---|
+| (400,240) | (350,186) |
+| (600,120) | (530,78) |
+| (200,360) | (134,294) |
+| (500,300) | (458,258) |
+
+对焦框坐标有量化（相机自己的对焦网格），误差在几十像素内。
+
+### 输入注入链路
+
+```
+daemon --pipe--> nx-input-injector (libxdo) --> X server --> 相机 UI
+```
+
+注入器支持：`mousemove x y` / `mousedown N` / `mouseup N` / `key ...` / `keydown` / `keyup`

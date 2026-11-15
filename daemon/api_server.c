@@ -220,6 +220,64 @@ static void handle_input_api(struct mg_connection *nc,
     } else if (mg_vcmp(func, "inject_keep_alive") == 0) {
         input_inject_keep_alive();
         send_200(nc);
+    } else if (mg_ncasecmp(func->p, "touch?", 6) == 0) {
+        /* 触摸点击：移动 + 按下 + 抬起，相机 UI 会当成手指触摸，
+         * 在全屏取景下就是"点这里对焦"。 */
+        char xbuf[16], ybuf[16], cmd[64];
+        int x = 0, y = 0;
+
+        if (mg_get_http_var(&hm->query_string, "x", xbuf, sizeof(xbuf)) > 0)
+            x = atoi(xbuf);
+        if (mg_get_http_var(&hm->query_string, "y", ybuf, sizeof(ybuf)) > 0)
+            y = atoi(ybuf);
+
+        if (x > 0 && y > 0) {
+            snprintf(cmd, sizeof(cmd), "mousemove %d %d", x, y);
+            input_inject(cmd);
+            input_inject("mousedown 1");
+            input_inject("mouseup 1");
+            print_log("touch %d %d", x, y);
+            send_200(nc);
+        } else {
+            mg_printf(nc, "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n");
+        }
+    } else if (mg_ncasecmp(func->p, "focus?", 6) == 0) {
+        /* 对焦到预览图上的某点。
+         * 入参 x,y 是 800x480 预览坐标；内部换算成屏幕点击坐标再注入。
+         * 换算系数由实机标定：
+         *   AF_x = 0.9092*click_y - 9.9
+         *   AF_y = -0.9487*click_x + 419.1
+         * 可点区域实测约 x∈[40,470] y∈[100,770]（480x800 竖屏）。 */
+        char xbuf[16], ybuf[16], cmd[64];
+        int px = -1, py = -1, cx, cy;
+
+        if (mg_get_http_var(&hm->query_string, "x", xbuf, sizeof(xbuf)) > 0)
+            px = atoi(xbuf);
+        if (mg_get_http_var(&hm->query_string, "y", ybuf, sizeof(ybuf)) > 0)
+            py = atoi(ybuf);
+
+        if (px >= 0 && py >= 0) {
+            /* 完全照搬原版 web UI (web_root/js/mouseinput.js) 对 NX300 的处理：
+             *   click_x = 480 - canvas_y
+             *   click_y = canvas_x
+             * canvas 是 800x480（横屏取景），X 屏幕是 480x800（竖屏）。 */
+            cx = 480 - py;
+            cy = px;
+            if (cx < 0) cx = 0;
+            if (cx > 479) cx = 479;
+            if (cy < 0) cy = 0;
+            if (cy > 799) cy = 799;
+            snprintf(cmd, sizeof(cmd), "mousemove %d %d", cx, cy);
+            input_inject(cmd);
+            usleep(120000);          /* 相机 UI 需要时间处理移动 */
+            input_inject("mousedown 1");
+            usleep(80000);
+            input_inject("mouseup 1");
+            print_log("focus preview(%d,%d) -> click(%d,%d)", px, py, cx, cy);
+            send_200(nc);
+        } else {
+            mg_printf(nc, "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n");
+        }
     }
 }
 
