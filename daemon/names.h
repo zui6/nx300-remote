@@ -9,6 +9,6 @@ const char *name_wb(int v);
 const char *name_picture_wizard(int v);
 const char *name_af_mode(int v);
 const char *name_flash(int v);
-const char *name_tracking(int v);
+const char *name_touch_af(int v);
 
 #endif
