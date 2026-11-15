@@ -617,3 +617,89 @@ UI 层里有网格线、顶部信息、底部参数条、按钮 —— 但**没�
 已知安全的读法：
 - 单个窗口基址（从寄存器读到的）
 - `0x500b0000` 起的 LCD 寄存器块（0x1000 内）
+## 硬件 JPEG 编码器（已打通，有重大限制）
+
+### 调用链（全部确认）
+
+```
+libmmfhal.so.0
+  mmf_jpeg_encode(tMmfYuvData*, tMmfData*)     C++ 修饰名 _Z15mmf_jpeg_encodeP11tMmfYuvDataP8tMmfData
+    -> cHalJpeg::GetInstance() / cHalJpeg::Encode()
+       -> jpeg_open / jpeg_init / jpeg_encoder  (实现在 libudd.so.3.1)
+          -> mmap 寄存器 0x500a0000 (JPEG_TOP) / 0x500a1000 (JPEG_CTRL)
+```
+
+**前置条件**：必须先调 `bma_open()`（libudd 导出），否则报
+`bma device driver is not opened`。
+
+### 结构体（反编译 + 实测确认）
+
+```c
+struct yuv_data {              // tMmfYuvData
+    int fmt;      // +0x00   0/1/2/3，经 cHalJpeg 后实际都变成 0 或 1
+    int width;    // +0x04   必须是 16 的倍数
+    int height;   // +0x08   必须是 16 的倍数（否则编码器直接返回 size=0）
+    int size;     // +0x0c   Y 平面大小 = w*h
+    int pad10, pad14, pad18;
+    void *p1, *p2, *p3, *p4;  // +0x1c / +0x20 / +0x24 / +0x28
+};
+struct mmf_data { void *buf; int size; };   // size 按 16 位读，>65535 会截断成 0
+```
+
+**必须传虚拟地址**，udd 内部会自己转物理地址。
+传物理地址会导致 DMA 写飞 → **内核崩溃重启**（实测踩到）。
+
+### 物理内存：/dev/d4_sma
+
+```
+ioctl(fd, 0x80047308, &u32)                 查询池大小（约 398 MB: 0x18e00000）
+ioctl(fd, 0xc0087305, &{u32 phys; u32 size}) 分配，phys 是出参
+mmap(fd, phys >> 12, size, RW, SHARED)      映射到用户空间（offset 用物理地址页号）
+ioctl(fd, 0xc0047302, &u32 va)              虚拟地址 → 物理地址（实测正确）
+```
+
+映射方式已验证：`mmap(fd, phys>>12)` 与 `/dev/mem` 映射指向同一物理页；
+`mmap(fd, 0)` 是**另一块**内存，不能用。
+
+### 实测结果
+
+| 项目 | 结果 |
+|---|---|
+| 能否编码 | ✅ 输出合法 JPEG（FFD8…FFD9），Pillow 可解码 |
+| 编码速度 | **约 16.8 ms/帧**（40 帧 0.671 s 墙钟）|
+| 输出大小 | 320×240 约 42 KB（质量固定为很高）|
+| 编码内容 | **相机实时取景画面**，不是我们传入的数据 |
+
+### 重大限制
+
+1. **输入指针被忽略**：把输入缓冲填成全 128（纯灰），输出仍是实时场景
+   （10084 种颜色）。硬件实际编码的是相机自己的取景缓冲。
+   → 好处：不用自己读 /dev/mem 喂数据；坏处：无法控制输入内容。
+2. **质量不可调**：输出 42 KB @320×240，对 WiFi 传输太重。
+   `cHalJpeg::Encode` 里写死的 `20000` 和内部静态配置块控制质量，未找到可调入口。
+3. **SMA 分配不释放**：`munmap` 不会归还池子（地址单调递增），进程退出也不归还。
+   每次运行泄漏 256 KB，池子会碎片化，之后大块分配失败。**长时间运行必须先解决释放**。
+4. 尺寸受 16 对齐限制，160×120 / 240×180 / 400×300 都直接失败。
+
+### 结论
+
+硬件编码器能跑、速度够（~60fps 能力），但当前只能编码"相机自己的实时画面"且质量固定，
+**不适合直接替代现有 JPEG 路径**（42 KB/帧 × 20 fps = 840 KB/s，NX300 的 WiFi 扛不住）。
+
+若要真正用上，需要找到质量/输入控制入口——那要继续逆 `libudd` 的 `jpeg_set_yuv_stream`
+参数结构，属于后续工作。
+
+## 相机端已有的 H.264 流（另一条路）
+
+NX 相机在**Wi-Fi 遥控模式**下自带 H.264 直播流：
+
+```
+http://<相机IP>:7679/livestream.avi      AVI 容器 + vidsH264，640×480
+```
+
+这是相机固件自己用硬件编码的，零 CPU 开销，延迟约 100 ms
+（参考实现：github.com/Berkcan90/NX300-Preview-and-Control-Panel，
+客户端修补参考：github.com/LORQUAD08/Samsung-SmartCamera-64bit-NX-Mod）。
+
+**但只在相机切到 WiFi 遥控模式时才可用**，普通拍摄模式端口不开。
+我们用自建 daemon 替换了原厂 daemon，该端口目前也没有。
