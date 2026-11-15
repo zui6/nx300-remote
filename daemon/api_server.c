@@ -301,10 +301,10 @@ static const struct mg_str fields_prefix = MG_MK_STR("/api/v1/fields");
                     int used = snprintf(js, sizeof(js),
                              "{\"iso\":%d,\"iso_max\":%d,\"af_area\":%d,\"shutter_num\":%u,"
                              "\"shutter_den\":%u,\"aperture10\":%u,\"tv16\":%u,\"av16\":%u,"
-                             "\"wb\":%d,\"metering\":%d,\"drive\":%d,\"quality\":%d,\"pw\":%d,\"af_mode\":%d,\"flash\":%d",
+                             "\"wb\":%d,\"metering\":%d,\"drive\":%d,\"quality\":%d,\"pw\":%d,\"af_mode\":%d,\"flash\":%d,\"tracking\":%d",
                              cp.iso, cp.iso_max, cp.af_area, cp.shutter_num, cp.shutter_den,
                              cp.aperture10, cp.tv16, cp.av16,
-                             cp.wb, cp.metering, cp.drive, cp.quality, cp.pw, cp.af_mode, cp.flash);
+                             cp.wb, cp.metering, cp.drive, cp.quality, cp.pw, cp.af_mode, cp.flash, cp.tracking);
                     if (nwb) used += snprintf(js + used, sizeof(js) - used, ",\"wb_name\":\"%s\"", nwb);
                     if (nmt) used += snprintf(js + used, sizeof(js) - used, ",\"metering_name\":\"%s\"", nmt);
                     if (naf) used += snprintf(js + used, sizeof(js) - used, ",\"af_area_name\":\"%s\"", naf);
@@ -314,7 +314,8 @@ static const struct mg_str fields_prefix = MG_MK_STR("/api/v1/fields");
                       if (np) used += snprintf(js + used, sizeof(js) - used, ",\"pw_name\":\"%s\"", np);
                       { const char *nam = name_af_mode(cp.af_mode); const char *nfl = name_flash(cp.flash);
                         if (nam) used += snprintf(js + used, sizeof(js) - used, ",\"af_mode_name\":\"%s\"", nam);
-                        if (nfl) used += snprintf(js + used, sizeof(js) - used, ",\"flash_name\":\"%s\"", nfl); } }
+                        if (nfl) used += snprintf(js + used, sizeof(js) - used, ",\"flash_name\":\"%s\"", nfl);
+                        { const char *ntr = name_tracking(cp.tracking); if (ntr) used += snprintf(js + used, sizeof(js) - used, ",\"tracking_name\":\"%s\"", ntr); } } }
                     snprintf(js + used, sizeof(js) - used, "}");
                     mg_printf(nc, "HTTP/1.1 200 OK\r\nX-NX-Rebuilt: 1\r\n"
                                   "Content-Type: application/json\r\n"

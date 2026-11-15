@@ -13,6 +13,7 @@ struct cam_params {
     int pw;
     int af_mode;
     int flash;
+    int tracking;
     unsigned int shutter_num;
     unsigned int shutter_den;
     unsigned int aperture10;

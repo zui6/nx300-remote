@@ -103,3 +103,12 @@ const char *name_flash(int v)
     if (v < 0 || v >= COUNT(FLASH_NAMES)) return NULL;
     return FLASH_NAMES[v];
 }
+/* 跟踪 AF：0x4df690，3=开启（实验：3->0->3），0=关闭 */
+const char *name_tracking(int v)
+{
+    switch (v) {
+        case 3: return "开";
+        case 0: return "关";
+        default: return NULL;
+    }
+}
