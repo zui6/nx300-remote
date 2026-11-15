@@ -88,55 +88,12 @@ static void nx_output_message(j_common_ptr cinfo)
     fprintf(stderr, "[libjpeg] %s\n", buf);
 }
 
-/* ---- 常驻压缩器 + 可复用输出缓冲 ----
- * 原来每帧 create/destroy 压缩器并 malloc/free 输出，固定开销很高。
- * 改成只建一次，之后每帧复用；输出写入内部缓冲（调用者不要再 free）。
- */
-struct nx_dest {
-    struct jpeg_destination_mgr pub;
-    size_t len;
-};
-
-static struct jpeg_compress_struct s_cinfo;
-static struct nx_jpeg_err s_jerr;
-static struct nx_dest s_dst;
-static unsigned char *s_out = NULL;
-static size_t s_out_cap = 0;
-static int s_cinfo_ready = 0;
-
-static void nx_dst_init(j_compress_ptr c)
-{
-    (void) c;
-    s_dst.pub.next_output_byte = s_out;
-    s_dst.pub.free_in_buffer = s_out_cap;
-}
-
-static boolean nx_dst_empty(j_compress_ptr c)
-{
-    size_t used = s_out_cap;
-    size_t ncap = s_out_cap ? s_out_cap * 2 : 65536;
-    unsigned char *n = (unsigned char *) realloc(s_out, ncap);
-    (void) c;
-    if (n == NULL) return FALSE;
-    s_out = n;
-    s_out_cap = ncap;
-    s_dst.pub.next_output_byte = s_out + used;
-    s_dst.pub.free_in_buffer = ncap - used;
-    return TRUE;
-}
-
-static void nx_dst_term(j_compress_ptr c)
-{
-    (void) c;
-    s_dst.len = s_out_cap - s_dst.pub.free_in_buffer;
-}
-
 int jpeg_nv12_encode(const unsigned char *nv12, int width, int height,
                      int quality, int scale, int expand_range,
                      unsigned char **out, unsigned long *out_len)
 {
-    struct jpeg_compress_struct *cinfo = &s_cinfo;
-    struct nx_jpeg_err *jerr = &s_jerr;
+    struct jpeg_compress_struct cinfo;
+    struct nx_jpeg_err jerr;
     JSAMPROW yrows[16], cbrows[8], crrows[8];
     JSAMPARRAY planes[3];
     int ow, oh, cw, ch, x, y, row;
@@ -212,45 +169,37 @@ int jpeg_nv12_encode(const unsigned char *nv12, int width, int height,
     *out = NULL;
     *out_len = 0;
 
-    /* 压缩器只建一次 */
-    if (!s_cinfo_ready) {
-        s_cinfo.err = jpeg_std_error(&s_jerr.pub);
-        s_jerr.pub.error_exit = nx_error_exit;
-        s_jerr.pub.output_message = nx_output_message;
-        jpeg_create_compress(&s_cinfo);
-        s_cinfo_ready = 1;
-    }
-    s_dst.pub.init_destination = nx_dst_init;
-    s_dst.pub.empty_output_buffer = nx_dst_empty;
-    s_dst.pub.term_destination = nx_dst_term;
-    s_cinfo.dest = &s_dst.pub;
+    cinfo.err = jpeg_std_error(&jerr.pub);
+    jerr.pub.error_exit = nx_error_exit;
+    jerr.pub.output_message = nx_output_message;
 
-    if (setjmp(s_jerr.jb)) {
-        jpeg_abort_compress(&s_cinfo);
+    if (setjmp(jerr.jb)) {
+        jpeg_destroy_compress(&cinfo);
         return -1;
     }
 
-    s_dst.len = 0;
+    jpeg_create_compress(&cinfo);
+    jpeg_mem_dest(&cinfo, out, out_len);
 
-    cinfo->image_width = (JDIMENSION) ow;
-    cinfo->image_height = (JDIMENSION) oh;
-    cinfo->input_components = 3;
-    cinfo->in_color_space = JCS_YCbCr;
+    cinfo.image_width = (JDIMENSION) ow;
+    cinfo.image_height = (JDIMENSION) oh;
+    cinfo.input_components = 3;
+    cinfo.in_color_space = JCS_YCbCr;
 
-    jpeg_set_defaults(cinfo);
-    jpeg_set_quality(cinfo, quality, TRUE);
+    jpeg_set_defaults(&cinfo);
+    jpeg_set_quality(&cinfo, quality, TRUE);
 
-    cinfo->raw_data_in = TRUE;
-    cinfo->dct_method = JDCT_IFAST;
+    cinfo.raw_data_in = TRUE;
+    cinfo.dct_method = JDCT_IFAST;
 
-    cinfo->comp_info[0].h_samp_factor = 2;
-    cinfo->comp_info[0].v_samp_factor = 2;
-    cinfo->comp_info[1].h_samp_factor = 1;
-    cinfo->comp_info[1].v_samp_factor = 1;
-    cinfo->comp_info[2].h_samp_factor = 1;
-    cinfo->comp_info[2].v_samp_factor = 1;
+    cinfo.comp_info[0].h_samp_factor = 2;
+    cinfo.comp_info[0].v_samp_factor = 2;
+    cinfo.comp_info[1].h_samp_factor = 1;
+    cinfo.comp_info[1].v_samp_factor = 1;
+    cinfo.comp_info[2].h_samp_factor = 1;
+    cinfo.comp_info[2].v_samp_factor = 1;
 
-    jpeg_start_compress(cinfo, TRUE);
+    jpeg_start_compress(&cinfo, TRUE);
 
     planes[0] = yrows;
     planes[1] = cbrows;
@@ -265,14 +214,11 @@ int jpeg_nv12_encode(const unsigned char *nv12, int width, int height,
             cbrows[i] = s_cbp + (size_t) (row / 2 + i) * cw;
             crrows[i] = s_crp + (size_t) (row / 2 + i) * cw;
         }
-        jpeg_write_raw_data(cinfo, planes, 16);
+        jpeg_write_raw_data(&cinfo, planes, 16);
     }
 
-    jpeg_finish_compress(cinfo);
+    jpeg_finish_compress(&cinfo);
+    jpeg_destroy_compress(&cinfo);
 
-    /* 输出在内部缓冲里，调用者不要 free */
-    *out = s_out;
-    *out_len = s_dst.len;
-
-    return (s_dst.len > 0) ? 0 : -1;
+    return (*out != NULL && *out_len > 0) ? 0 : -1;
 }
