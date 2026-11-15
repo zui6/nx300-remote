@@ -1,15 +1,16 @@
 """nx300_view.py —— 电脑端取景预览
 
-从相机 daemon 拉 JPEG 实时显示，统计帧率与耗时，点画面即可设置对焦点。
+从相机 daemon 拉 JPEG 实时显示，统计帧率，显示对焦点，点画面即可设置对焦点。
 
 用法:
     python nx300_view.py [IP] [预设]
 
 预设: 0=流畅 1=标准 2=清晰
-按键: 1/2/3 切换画质, O 叠加相机界面, 空格 暂停, ESC 退出
+按键: 1/2/3 切换画质, F 显示/隐藏对焦框, 空格 暂停, ESC 退出
 """
 
 import io
+import json
 import sys
 import time
 import http.client
@@ -17,7 +18,7 @@ import threading
 
 import tkinter as tk
 from tkinter import font as tkfont
-from PIL import Image, ImageTk, ImageChops
+from PIL import Image, ImageTk
 
 PREVIEW_W, PREVIEW_H = 800, 480
 
@@ -26,6 +27,18 @@ PRESETS = {
     1: ("标准", 70, 2),
     2: ("清晰", 85, 1),
 }
+
+# 对焦框坐标(AF 空间) -> 预览图像素坐标
+# 实机标定: AF_x = 0.9092*canvas_x - 9.9 , AF_y = 0.9487*canvas_y - 36.3
+def af_to_canvas_x(ax):
+    return (ax + 9.9) / 0.9092
+
+
+def af_to_canvas_y(ay):
+    return (ay + 36.3) / 0.9487
+
+
+BOX_W, BOX_H = 56, 42
 
 
 class Stats:
@@ -55,10 +68,16 @@ class Viewer:
         self.paused = False
         self.running = True
         self.conn = None
+        self.pconn = None
         self.stats = Stats()
         self.last = None
-        self.osd = None
-        self.osd_loading = False
+        self.af = None
+        self.af_area = -1
+        self.touch_af = -1
+        self.af_mode = -1
+        self.show_af = True
+        self.af_t = 0.0
+        self.focusing = False
 
         self.root = tk.Tk()
         self.root.title("NX300 取景预览")
@@ -77,7 +96,7 @@ class Viewer:
 
         self.keys = tk.Label(
             self.root,
-            text="1/2/3 画质 · 点击设对焦点 · O 显示相机界面 · 空格暂停 · ESC 退出",
+            text="1/2/3 画质 · 点击设对焦点 · F 对焦框 · 空格暂停 · ESC 退出",
             bg="#101014", fg="#555566", font=("Consolas", 10))
         self.keys.pack(fill="x", padx=8, pady=(0, 6))
 
@@ -106,14 +125,27 @@ class Viewer:
         t0 = time.time()
         try:
             self.conn.request("GET", path)
-            r = self.conn.getresponse()
-            data = r.read()
+            data = self.conn.getresponse().read()
         except Exception:
             self.connect()
             self.conn.request("GET", path)
-            r = self.conn.getresponse()
-            data = r.read()
+            data = self.conn.getresponse().read()
         return data, time.time() - t0
+
+    def fetch_af(self):
+        try:
+            if self.pconn is None:
+                self.pconn = http.client.HTTPConnection(self.host, 80, timeout=5)
+            self.pconn.request("GET", "/api/v1/params")
+            d = json.loads(self.pconn.getresponse().read().decode("utf-8"))
+            ax, ay = d.get("af_x"), d.get("af_y")
+            self.af_area = d.get("af_area", -1)
+            self.touch_af = d.get("touch_af", -1)
+            self.af_mode = d.get("af_mode", -1)
+            if ax is not None and ay is not None and ax >= 0 and ay >= 0:
+                self.af = (ax, ay)
+        except Exception:
+            self.pconn = None
 
     def post(self, path):
         try:
@@ -123,24 +155,6 @@ class Viewer:
             self.conn.getresponse().read()
         except Exception:
             self.connect()
-
-    def load_osd(self):
-        if self.osd_loading:
-            return
-        self.osd_loading = True
-        try:
-            conn = http.client.HTTPConnection(self.host, 80, timeout=30)
-            conn.request("GET", "/api/v1/osd/snap")
-            data = conn.getresponse().read()
-            conn.close()
-            if data[:2] == b"\xff\xd8":
-                img = Image.open(io.BytesIO(data)).convert("RGB")
-                if img.size != (PREVIEW_W, PREVIEW_H):
-                    img = img.resize((PREVIEW_W, PREVIEW_H), Image.LANCZOS)
-                self.osd = img
-        except Exception:
-            pass
-        self.osd_loading = False
 
     # ---------- 主循环 ----------
     def loop(self):
@@ -154,14 +168,18 @@ class Viewer:
             except Exception:
                 time.sleep(0.2)
                 continue
-            if not data or data[:2] != b"\xff\xd8":
+            if data and data[:2] == b"\xff\xd8":
+                self.stats.tick(len(data), dt)
+                try:
+                    self.last = Image.open(io.BytesIO(data)).convert("RGB")
+                except Exception:
+                    self.stats.dropped += 1
+            else:
                 self.stats.dropped += 1
-                continue
-            self.stats.tick(len(data), dt)
-            try:
-                self.last = Image.open(io.BytesIO(data)).convert("RGB")
-            except Exception:
-                self.stats.dropped += 1
+
+            if self.show_af and time.time() - self.af_t > 0.25:
+                self.af_t = time.time()
+                self.fetch_af()
 
     def refresh_ui(self):
         if self.last is not None:
@@ -169,29 +187,56 @@ class Viewer:
             self.last = None
             if img.size != (PREVIEW_W, PREVIEW_H):
                 img = img.resize((PREVIEW_W, PREVIEW_H), Image.NEAREST)
-            if self.osd is not None:
-                img = ImageChops.lighter(img, self.osd)
             self.photo = ImageTk.PhotoImage(img)
             self.canvas.delete("all")
             self.canvas.create_image(0, 0, anchor="nw", image=self.photo)
+            self.draw_af()
+
         s = self.stats
         name = PRESETS[self.preset][0]
-        extra = ""
+        afname = {0: "选择AF", 1: "多重AF", 2: "脸部侦测", 3: "自拍AF"}.get(self.af_area, "?")
+        extra = ("  " + afname) if self.af_area >= 0 else ""
         if self.paused:
             extra += "  [暂停]"
-        if self.osd is not None:
-            extra += "  [界面]"
-        elif self.osd_loading:
-            extra += "  [抓界面…]"
         self.info.config(
             text="%s · %.1f fps · %.1f KB/帧 · 往返 %.0f ms%s"
             % (name, s.fps, s.kb, s.ms, extra))
         self.root.after(30, self.refresh_ui)
 
+    def draw_af(self):
+        if not self.show_af or self.af is None:
+            return
+        # 只有在"能确定一个固定对焦框"的模式下才画：
+        #   AF区=选择AF(0) 或 触摸AF=AF点(2)
+        # 脸部侦测/跟踪AF 的框是动态的，画了反而误导
+        static_box = (self.af_area == 0) or (self.touch_af == 2)
+        if not static_box:
+            return
+        cx = af_to_canvas_x(self.af[0])
+        cy = af_to_canvas_y(self.af[1])
+        w, h = BOX_W / 2, BOX_H / 2
+        c = "#FFFFFF" if not self.focusing else "#00E676"
+
+        # 先画一条暗边做对比，再画亮边
+        for color, lw in (("#000000", 3), (c, 1)):
+            for sx, sy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
+                x0 = cx + sx * w
+                y0 = cy + sy * h
+                # 水平臂
+                self.canvas.create_line(x0, y0, x0 - sx * 14, y0, fill=color, width=lw)
+                # 垂直臂
+                self.canvas.create_line(x0, y0, x0, y0 - sy * 11, fill=color, width=lw)
+
+        # 中心十字
+        for color, lw in (("#000000", 3), (c, 1)):
+            self.canvas.create_line(cx - 4, cy, cx + 4, cy, fill=color, width=lw)
+            self.canvas.create_line(cx, cy - 3, cx, cy + 3, fill=color, width=lw)
     # ---------- 交互 ----------
     def on_click(self, ev):
         x = max(0, min(PREVIEW_W - 1, ev.x))
         y = max(0, min(PREVIEW_H - 1, ev.y))
+        self.focusing = True
+        self.root.after(1200, lambda: setattr(self, 'focusing', False))
         threading.Thread(target=self.post,
                          args=("/api/v1/input/focus?x=%d&y=%d" % (x, y),),
                          daemon=True).start()
@@ -201,11 +246,8 @@ class Viewer:
             self.quit()
         elif ev.char and ev.char in "123":
             self.preset = int(ev.char) - 1
-        elif ev.char and ev.char in ("o", "O"):
-            if self.osd is not None:
-                self.osd = None
-            else:
-                threading.Thread(target=self.load_osd, daemon=True).start()
+        elif ev.char and ev.char in ("f", "F"):
+            self.show_af = not self.show_af
         elif ev.keysym == "space":
             self.paused = not self.paused
 

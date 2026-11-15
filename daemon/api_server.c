@@ -375,10 +375,12 @@ static const struct mg_str fields_prefix = MG_MK_STR("/api/v1/fields");
                     int used = snprintf(js, sizeof(js),
                              "{\"iso\":%d,\"iso_max\":%d,\"af_area\":%d,\"shutter_num\":%u,"
                              "\"shutter_den\":%u,\"aperture10\":%u,\"tv16\":%u,\"av16\":%u,"
-                             "\"wb\":%d,\"metering\":%d,\"drive\":%d,\"quality\":%d,\"pw\":%d,\"af_mode\":%d,\"flash\":%d,\"touch_af\":%d",
+                             "\"wb\":%d,\"metering\":%d,\"drive\":%d,\"quality\":%d,\"pw\":%d,\"af_mode\":%d,\"flash\":%d,\"touch_af\":%d,"
+                             "\"af_x\":%d,\"af_y\":%d",
                              cp.iso, cp.iso_max, cp.af_area, cp.shutter_num, cp.shutter_den,
                              cp.aperture10, cp.tv16, cp.av16,
-                             cp.wb, cp.metering, cp.drive, cp.quality, cp.pw, cp.af_mode, cp.flash, cp.touch_af);
+                             cp.wb, cp.metering, cp.drive, cp.quality, cp.pw, cp.af_mode, cp.flash, cp.touch_af,
+                             cp.af_x, cp.af_y);
                     if (nwb) used += snprintf(js + used, sizeof(js) - used, ",\"wb_name\":\"%s\"", nwb);
                     if (nmt) used += snprintf(js + used, sizeof(js) - used, ",\"metering_name\":\"%s\"", nmt);
                     if (naf) used += snprintf(js + used, sizeof(js) - used, ",\"af_area_name\":\"%s\"", naf);
