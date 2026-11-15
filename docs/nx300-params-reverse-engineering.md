@@ -337,3 +337,75 @@ AF区    0=选择AF    1=多重AF  (2=脸部侦测AF 推测)
  "af_area":1,"af_area_name":"多重AF",
  "drive":0,"drive_name":"单张"}
 ```
+## 完整枚举表（反编译各 set_xxx 确认）
+
+每个 `set_xxx(int)` 都是"按值取图标"的数组，**数组下标就是枚举值**。
+
+### AF 区 `set_af_area`
+| 值 | 名称 | 图标 |
+|---|---|---|
+| 0 | 选择AF | focus_selection.png |
+| 1 | 多重AF | focus_multi.png |
+| 2 | 脸部侦测AF | focus_fd.png |
+| 3 | 自拍AF | focus_sfd.png |
+
+（注意：跟踪AF 不在这个菜单里，属于另一个功能）
+
+### 测光 `set_metering`
+| 值 | 名称 |
+|---|---|
+| 0 | 多重测光 |
+| 1 | 点测光 |
+| 2 | 中央重点 |
+
+### 驱动 `set_drive`
+| 值 | 名称 | 图标 |
+|---|---|---|
+| 0 | 单张 | drive_single |
+| 1 | 高速连拍 | continuous_7fps |
+| 2 | 连拍 | continuous_5fps |
+| 3 | 高速拍摄 | burst |
+| 4 | 定时器 | timer |
+| 5 | AE BKT | aeb |
+| 6 | WB BKT | wbb |
+| 7 | 图片向导 BKT | pwb |
+
+### 画质 `set_quality`
+| 值 | 名称 |
+|---|---|
+| 0 | 超精细 |
+| 1 | 精细 |
+| 2 | 标准 |
+| 3 | RAW |
+| 4 | RAW+超精细 |
+| 5 | RAW+精细 |
+| 6 | RAW+标准 |
+
+### 白平衡 `set_white_balance`（图标数组，与 .rodata 0x2467a0 一致）
+| 值 | 名称 | 值 | 名称 |
+|---|---|---|---|
+| 0 | 自动白平衡 | 5 | 荧光灯_D |
+| 1 | 日光 | 6 | 白炽灯 |
+| 2 | 阴天 | 7 | 闪光灯 |
+| 3 | 荧光灯_W | 8 | 自定义 |
+| 4 | 荧光灯_N | 9 | 色温 |
+
+### ISO `set_iso`
+字段 0x4df648（整档）：0=AUTO, 1=100, 2=200, 3=400, 4=800, 5=1600, 6=3200, 7=6400, 8=12800, 9=25600
+字段 0x4df64c（1/3 档）：0=AUTO, 1=100, 2=125, 3=160, 4=200, 5=250, 6=320, 7=400 …
+
+### 图片向导 `set_gg_picture_wizard`
+字段 0x4df678：-1 = 关；否则 模式号×17（17 是 slider 步长）
+0x4df67c/680/684 是三个参数（0..8，滑杆）
+
+## 最终接口输出
+
+```json
+{"iso":200,"shutter_num":50,"shutter_den":10,"aperture10":220,
+ "wb":3,"wb_name":"荧光灯_W",
+ "metering":0,"metering_name":"多重测光",
+ "af_area":2,"af_area_name":"脸部侦测AF",
+ "drive":0,"drive_name":"单张",
+ "quality":4,"quality_name":"RAW+超精细",
+ "pw":-1,"pw_name":"关"}
+```

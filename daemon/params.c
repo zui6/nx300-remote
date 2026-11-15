@@ -127,6 +127,8 @@ int params_read(struct cam_params *p)
         p->wb       = (read_mem(pid, 0x4df650UL, &v, sizeof(v)) == (int) sizeof(v)) ? (int) v : -1;
         p->metering = (read_mem(pid, 0x4df720UL, &v, sizeof(v)) == (int) sizeof(v)) ? (int) v : -1;
         p->drive    = (read_mem(pid, 0x4df6ccUL, &v, sizeof(v)) == (int) sizeof(v)) ? (int) v : -1;
+        p->quality  = (read_mem(pid, 0x4df640UL, &v, sizeof(v)) == (int) sizeof(v)) ? (int) v : -1;
+        p->pw       = (read_mem(pid, 0x4df678UL, &v, sizeof(v)) == (int) sizeof(v)) ? (int) v : -1;
     }
     p->iso  = (int) (isob[0x10] | (isob[0x11] << 8) | (isob[0x12] << 16) | (isob[0x13] << 24));
     p->iso_max = (int) (isob[0x14] | (isob[0x15] << 8) | (isob[0x16] << 16) | (isob[0x17] << 24));

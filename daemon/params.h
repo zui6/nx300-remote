@@ -9,6 +9,8 @@ struct cam_params {
     int wb;
     int metering;
     int drive;
+    int quality;
+    int pw;
     unsigned int shutter_num;
     unsigned int shutter_den;
     unsigned int aperture10;

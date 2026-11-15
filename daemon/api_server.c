@@ -301,14 +301,17 @@ static const struct mg_str fields_prefix = MG_MK_STR("/api/v1/fields");
                     int used = snprintf(js, sizeof(js),
                              "{\"iso\":%d,\"iso_max\":%d,\"af_area\":%d,\"shutter_num\":%u,"
                              "\"shutter_den\":%u,\"aperture10\":%u,\"tv16\":%u,\"av16\":%u,"
-                             "\"wb\":%d,\"metering\":%d,\"drive\":%d",
+                             "\"wb\":%d,\"metering\":%d,\"drive\":%d,\"quality\":%d,\"pw\":%d",
                              cp.iso, cp.iso_max, cp.af_area, cp.shutter_num, cp.shutter_den,
                              cp.aperture10, cp.tv16, cp.av16,
-                             cp.wb, cp.metering, cp.drive);
+                             cp.wb, cp.metering, cp.drive, cp.quality, cp.pw);
                     if (nwb) used += snprintf(js + used, sizeof(js) - used, ",\"wb_name\":\"%s\"", nwb);
                     if (nmt) used += snprintf(js + used, sizeof(js) - used, ",\"metering_name\":\"%s\"", nmt);
                     if (naf) used += snprintf(js + used, sizeof(js) - used, ",\"af_area_name\":\"%s\"", naf);
                     if (ndr) used += snprintf(js + used, sizeof(js) - used, ",\"drive_name\":\"%s\"", ndr);
+                    { const char *nq = name_quality(cp.quality); const char *np = name_picture_wizard(cp.pw);
+                      if (nq) used += snprintf(js + used, sizeof(js) - used, ",\"quality_name\":\"%s\"", nq);
+                      if (np) used += snprintf(js + used, sizeof(js) - used, ",\"pw_name\":\"%s\"", np); }
                     snprintf(js + used, sizeof(js) - used, "}");
                     mg_printf(nc, "HTTP/1.1 200 OK\r\nX-NX-Rebuilt: 1\r\n"
                                   "Content-Type: application/json\r\n"

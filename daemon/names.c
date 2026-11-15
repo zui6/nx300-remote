@@ -1,53 +1,95 @@
 /*
  * names.c —— 参数值 → 中文名称
  *
- * 名称来源：相机自带翻译包
- *   /usr/share/locale/zh_CN/LC_MESSAGES/di-camera-app-nx300.mo
- * 白平衡的枚举顺序来自 .rodata 0x2467a0 的选项指针表（顺序即枚举值）。
- * 其余枚举由实验 + 反编译确认，未确认的返回 NULL（调用方省略该字段）。
+ * 名称来源：
+ *   /usr/share/locale/zh_CN/LC_MESSAGES/di-camera-app-nx300.mo（相机自带翻译包）
+ * 枚举顺序来源：各 set_xxx() 函数里按值取图标的数组 / 指针表（Ghidra 反编译确认）
+ *
+ *   set_af_area     local_1c[0..3]  = selection / multi / fd / sfd
+ *   set_metering    local_1c[0..2]  = multi / spot / center
+ *   set_drive       local_30[0..3] + 后续 4 个局部变量 = single/7fps/5fps/burst/timer/aeb/wbb/pwb
+ *   set_quality     local_30[0..3] + 后续 3 个 = sf/f/normal/raw/raw_sf/raw_f/raw_normal
+ *   set_white_balance .rodata 0x2467a0 指针表 = awb/daylight/cloudy/fluo_w/fluo_n/fluo_d/
+ *                                                tungsten/flash/custom/colortemp
  */
 
 #include <stddef.h>
 #include "names.h"
 
+#define COUNT(a) ((int) (sizeof(a) / sizeof((a)[0])))
+
+/* AF 区：0=选择 1=多重 2=脸部侦测 3=自拍脸部侦测 */
+static const char *const AF_AREA_NAMES[] = {
+    "选择AF", "多重AF", "脸部侦测AF", "自拍AF"
+};
+
+/* 测光：0=多重 1=点 2=中央重点 */
+static const char *const METERING_NAMES[] = {
+    "多重测光", "点测光", "中央重点"
+};
+
+/* 驱动：set_drive 的图标顺序 */
+static const char *const DRIVE_NAMES[] = {
+    "单张", "高速连拍", "连拍", "高速拍摄",
+    "定时器", "AE BKT", "WB BKT", "图片向导 BKT"
+};
+
+/* 画质：set_quality 的图标顺序 */
+static const char *const QUALITY_NAMES[] = {
+    "超精细", "精细", "标准",
+    "RAW", "RAW+超精细", "RAW+精细", "RAW+标准"
+};
+
+/* 白平衡：.rodata 0x2467a0 指针表顺序 */
 static const char *const WB_NAMES[] = {
     "自动白平衡", "日光", "阴天", "荧光灯_W", "荧光灯_N",
     "荧光灯_D", "白炽灯", "闪光灯", "自定义", "色温"
 };
 
-static const char *const METERING_NAMES[] = {
-    "多重测光", "点测光", "中央重点"
-};
-
-static const char *const AF_AREA_NAMES[] = {
-    "选择AF", "多重AF", "脸部侦测AF", "跟踪AF", "连续AF", "自拍AF"
-};
-
-const char *name_wb(int v)
+const char *name_af_area(int v)
 {
-    if (v < 0 || v >= (int) (sizeof(WB_NAMES) / sizeof(WB_NAMES[0]))) return NULL;
-    return WB_NAMES[v];
+    if (v < 0 || v >= COUNT(AF_AREA_NAMES)) return NULL;
+    return AF_AREA_NAMES[v];
 }
 
 const char *name_metering(int v)
 {
-    if (v < 0 || v >= (int) (sizeof(METERING_NAMES) / sizeof(METERING_NAMES[0]))) return NULL;
+    if (v < 0 || v >= COUNT(METERING_NAMES)) return NULL;
     return METERING_NAMES[v];
 }
 
-const char *name_af_area(int v)
-{
-    if (v < 0 || v >= (int) (sizeof(AF_AREA_NAMES) / sizeof(AF_AREA_NAMES[0]))) return NULL;
-    return AF_AREA_NAMES[v];
-}
-
-/* 驱动模式：0=单张、1=高速连拍、5=AE BKT（实验确认），其余未定 */
 const char *name_drive(int v)
 {
-    switch (v) {
-        case 0: return "单张";
-        case 1: return "高速连拍";
-        case 5: return "AE BKT";
-        default: return NULL;
-    }
+    if (v < 0 || v >= COUNT(DRIVE_NAMES)) return NULL;
+    return DRIVE_NAMES[v];
+}
+
+const char *name_quality(int v)
+{
+    if (v < 0 || v >= COUNT(QUALITY_NAMES)) return NULL;
+    return QUALITY_NAMES[v];
+}
+
+const char *name_wb(int v)
+{
+    if (v < 0 || v >= COUNT(WB_NAMES)) return NULL;
+    return WB_NAMES[v];
+}
+
+/*
+ * 图片向导：字段值 = -1(关) 或 模式序号×17
+ *   set_gg_picture_wizard 里 slider_position = value / 0x11，slider 范围 0..0x15
+ */
+static const char *const PW_NAMES[] = {
+    "标准", "鲜明", "人像", "风景", "悠远", "怀旧",
+    "古典", "清爽", "宁静", "用户设置1", "用户设置2", "用户设置3"
+};
+
+const char *name_picture_wizard(int v)
+{
+    int idx;
+    if (v < 0) return "关";
+    idx = v / 17;
+    if (idx >= COUNT(PW_NAMES)) return NULL;
+    return PW_NAMES[idx];
 }
