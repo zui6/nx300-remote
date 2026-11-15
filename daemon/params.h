@@ -6,6 +6,9 @@ struct cam_params {
     int iso;
     int iso_max;
     int af_area;
+    int wb;
+    int metering;
+    int drive;
     unsigned int shutter_num;
     unsigned int shutter_den;
     unsigned int aperture10;

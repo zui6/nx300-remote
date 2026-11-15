@@ -283,3 +283,57 @@ UI_Set_Value(id, v) @ 0x168758
 | 白平衡值 | 0x4df658 | set_white_balance |
 | 照片风格 | 0x4df678-684 | set_gg_picture_wizard |
 | MF 辅助 | 0x4df6b8 | set_mf_foucs_aid |
+## 界面名称（中文）
+
+相机的界面文案在 **gettext 翻译包**里：
+
+```
+/usr/share/locale/zh_CN/LC_MESSAGES/di-camera-app-nx300.mo   (198KB, 2723 条)
+```
+
+只读复制到 SD 卡即可导出（不修改系统）。
+
+解析后得到完整对照：
+
+| 参数 | msgid | 中文名 |
+|---|---|---|
+| ISO | CAP_FN_ISO | ISO |
+| 白平衡 | CAP_FN_WB | 白平衡 |
+| 测光 | CAP_FN_METERING | 测光 |
+| 拍摄模式 | CAP_FN_DRIVE | 拍摄模式 |
+| AF 区 | CAP_FN_AFAREA | AF区 |
+| AF 模式 | CAP_FN_AFMODE | AF模式 |
+| EV | CAP_FN_EV | EV |
+| 画质 | CAP_FN_QUALITY | 画质 |
+| 照片尺寸 | CAP_FN_PHOTO_SIZE | 照片尺寸 |
+| 图片向导 | CAP_FN_PW | 图片向导 |
+| 防抖 | CAP_FN_OIS | OIS（防抖） |
+
+### 选项名与枚举
+
+白平衡的选项顺序来自 `.rodata` 0x2467a0 的指针表（顺序即枚举值）：
+
+```
+0 自动白平衡   1 日光      2 阴天       3 荧光灯_W   4 荧光灯_N
+5 荧光灯_D     6 白炽灯    7 闪光灯     8 自定义     9 色温
+```
+
+其余（实验确认）：
+
+```
+测光    0=多重测光  1=点测光  2=中央重点
+AF区    0=选择AF    1=多重AF  (2=脸部侦测AF 推测)
+驱动    0=单张      1=高速连拍  5=AE BKT
+```
+
+### 接口
+
+`GET /api/v1/params` 直接返回中文名：
+
+```json
+{"iso":200,"shutter_num":50,"shutter_den":10,"aperture10":220,
+ "wb":3,"wb_name":"荧光灯_W",
+ "metering":0,"metering_name":"多重测光",
+ "af_area":1,"af_area_name":"多重AF",
+ "drive":0,"drive_name":"单张"}
+```

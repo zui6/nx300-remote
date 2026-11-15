@@ -7,6 +7,7 @@
 #include "screen_jpeg.h"
 #include "params.h"
 #include "fields.h"
+#include "names.h"
 #include "mongoose.h"
 #include "network.h"
 #include "nx_model.h"
@@ -291,13 +292,24 @@ static const struct mg_str fields_prefix = MG_MK_STR("/api/v1/fields");
             if (hm->uri.len == params_prefix.len &&
                 memcmp(hm->uri.p, params_prefix.p, params_prefix.len) == 0) {
                 struct cam_params cp;
-                char js[256];
+                char js[512];
                 if (params_read(&cp) == 0) {
-                    snprintf(js, sizeof(js),
+                    const char *nwb = name_wb(cp.wb);
+                    const char *nmt = name_metering(cp.metering);
+                    const char *naf = name_af_area(cp.af_area);
+                    const char *ndr = name_drive(cp.drive);
+                    int used = snprintf(js, sizeof(js),
                              "{\"iso\":%d,\"iso_max\":%d,\"af_area\":%d,\"shutter_num\":%u,"
-                             "\"shutter_den\":%u,\"aperture10\":%u,\"tv16\":%u,\"av16\":%u}",
+                             "\"shutter_den\":%u,\"aperture10\":%u,\"tv16\":%u,\"av16\":%u,"
+                             "\"wb\":%d,\"metering\":%d,\"drive\":%d",
                              cp.iso, cp.iso_max, cp.af_area, cp.shutter_num, cp.shutter_den,
-                             cp.aperture10, cp.tv16, cp.av16);
+                             cp.aperture10, cp.tv16, cp.av16,
+                             cp.wb, cp.metering, cp.drive);
+                    if (nwb) used += snprintf(js + used, sizeof(js) - used, ",\"wb_name\":\"%s\"", nwb);
+                    if (nmt) used += snprintf(js + used, sizeof(js) - used, ",\"metering_name\":\"%s\"", nmt);
+                    if (naf) used += snprintf(js + used, sizeof(js) - used, ",\"af_area_name\":\"%s\"", naf);
+                    if (ndr) used += snprintf(js + used, sizeof(js) - used, ",\"drive_name\":\"%s\"", ndr);
+                    snprintf(js + used, sizeof(js) - used, "}");
                     mg_printf(nc, "HTTP/1.1 200 OK\r\nX-NX-Rebuilt: 1\r\n"
                                   "Content-Type: application/json\r\n"
                                   "Access-Control-Allow-Origin: *\r\n"

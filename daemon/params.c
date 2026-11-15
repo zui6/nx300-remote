@@ -122,11 +122,11 @@ int params_read(struct cam_params *p)
     p->tv16 = expo[0x08] | (expo[0x09] << 8) | (expo[0x0a] << 16) | (expo[0x0b] << 24);
     p->av16 = expo[0x34] | (expo[0x35] << 8) | (expo[0x36] << 16) | (expo[0x37] << 24);
     {
-        unsigned int afv = 0;
-        if (read_mem(pid, 0x4df68cUL, &afv, sizeof(afv)) == (int) sizeof(afv))
-            p->af_area = (int) afv;
-        else
-            p->af_area = -1;
+        unsigned int v;
+        p->af_area  = (read_mem(pid, 0x4df68cUL, &v, sizeof(v)) == (int) sizeof(v)) ? (int) v : -1;
+        p->wb       = (read_mem(pid, 0x4df650UL, &v, sizeof(v)) == (int) sizeof(v)) ? (int) v : -1;
+        p->metering = (read_mem(pid, 0x4df720UL, &v, sizeof(v)) == (int) sizeof(v)) ? (int) v : -1;
+        p->drive    = (read_mem(pid, 0x4df6ccUL, &v, sizeof(v)) == (int) sizeof(v)) ? (int) v : -1;
     }
     p->iso  = (int) (isob[0x10] | (isob[0x11] << 8) | (isob[0x12] << 16) | (isob[0x13] << 24));
     p->iso_max = (int) (isob[0x14] | (isob[0x15] << 8) | (isob[0x16] << 16) | (isob[0x17] << 24));

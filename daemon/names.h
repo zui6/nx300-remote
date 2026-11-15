@@ -1,0 +1,9 @@
+#ifndef NAMES_H_INCLUDED
+#define NAMES_H_INCLUDED
+
+const char *name_wb(int v);
+const char *name_metering(int v);
+const char *name_af_area(int v);
+const char *name_drive(int v);
+
+#endif
