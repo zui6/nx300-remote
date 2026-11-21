@@ -835,52 +835,75 @@ http://<相机IP>:7679/livestream.avi     640×480, AVI + H.264
 
 固件自己用硬件编码，零 CPU、约 100 ms 延迟，不需要碰任何底层接口。
 限制是必须先让相机切到那个模式。
-## 原始 YUV 通道（实验分支 experiment/compressor-reuse）
+## 突破：硬件/NEON H.264 编码器可用（2026-11-22）
 
-### 接口
+### 之前判断错误的地方
+
+早期结论「`savsenc_h264` 只认高通平台」是**错的**。
+`libs264.so` 里的 `s264_init()` 把 `/proc/cpuinfo` 的 `Hardware` 行
+和一张 **30 项**平台表做 `strstr` 比对，表里有多项三星平台：
 
 ```
-GET /api/v1/liveview/raw?scale=N     N = 1..4，默认 3
-响应头: Content-Type: application/octet-stream
-        X-NX-Width / X-NX-Height / X-NX-Format: nv12
-响应体: NV12（Y 平面 + 交错 UV），尺寸 ow x oh
+[ 2] 'Samsung-DRIMeIV-ES'    ← 关键
+[ 5] 'SMDK4412'   [ 6] 'SMDK4212'
+[ 7] 'SLP10_C210'  [14] 'UNIVERSAL_C210'   ...
 ```
 
-实现要点：
-- 只做点采样降采样，**完全不调用 JPEG 编码器**
-- `scale=1` 时零拷贝直接 `mg_send` 相机缓冲
-- `scale>1` 写入静态可复用缓冲（`realloc` 只在尺寸变化时发生）
+而相机实际的 Hardware 行是：
 
-### 客户端解码实测（PC，纯 numpy 向量化）
+```
+Hardware        : Samsung-DRIMeIV-NX300
+```
 
-| 分辨率 | 解码耗时 | 理论上限 |
+`strstr("Samsung-DRIMeIV-NX300", "Samsung-DRIMeIV-ES")` **不匹配**，
+整张表扫完没命中 → 返回 `0xfffff830`（-2000）。**只差产品后缀 `-ES` vs `-NX300`。**
+
+### 修复方式（不写系统分区）
+
+把 `libs264.so` 里的 `Samsung-DRIMeIV-ES`（18 字节）等长改成
+`Samsung-DRIMeIV-NX`（18 字节），放在 SD 卡 `tmpbin/`，
+运行时用 `LD_LIBRARY_PATH` 覆盖：
+
+```sh
+export LD_LIBRARY_PATH=/mnt/mmc/tmpbin
+export GST_PLUGIN_PATH=/usr/lib/gstreamer-0.10
+export GST_REGISTRY=/tmp/gst.reg
+gst-launch-0.10 videotestsrc num-buffers=30 \
+  ! video/x-raw-yuv,format=\(fourcc\)I420,width=640,height=480,framerate=30/1 \
+  ! savsenc_h264 ! filesink location=/mnt/mmc/out.h264
+```
+
+### 验证结果
+
+码流结构完全合法（30 帧）：
+
+```
+SPS 1  PPS 1  IDR 1  非IDR片 29
+```
+
+### 性能实测（120 帧，含 videotestsrc 开销）
+
+| 分辨率 | 耗时 | 帧率 |
 |---|---|---|
-| 266×160 | 2.3 ms | 434 fps |
-| 320×192 | 3.9 ms | 256 fps |
-| 400×240 | 4.5 ms | 222 fps |
-| 800×480 | 20.3 ms | 49 fps |
+| 320×240 | 4 s | **30 fps** |
+| 480×360 | 8 s | 15 fps |
+| 640×480 | 13 s | 9.2 fps |
 
-**客户端不是瓶颈。**
+随分辨率线性变化 → 是 **CPU 上的 NEON 软件编码**（不是 MFC）。
+即使如此，320×240 的 30fps 也比现有 JPEG 路径（400×240 约 14fps）快一倍。
 
-### 解码正确性验证
+### 编码器可调参数
 
-RGB → NV12 → RGB 往返（四色块 64×48）：
+```
+bitrate      0 = 不控码率
+quantizer    1-51，默认 14
+qmin/qmax    1-51
+idr-size     IDR 间隔，默认 30
+slice-mode   0/1/2
+```
 
-| 色块 | 期望 | 得到 | 最大误差 |
-|---|---|---|---|
-| 红 | (255,0,0) | (252,0,0) | 3 |
-| 绿 | (0,255,0) | (0,254,0) | 1 |
-| 蓝 | (0,0,255) | (0,0,251) | 4 |
-| 灰 | (128,128,128) | (126,126,126) | 2 |
+### 意义
 
-结论：解码器正确（误差来自 YUV420 有损量化，属正常）。
-
-### 带宽约束（实测 2.25 MB/s）
-
-| 分辨率 | 每帧 | 20fps 需求 | 结论 |
-|---|---|---|---|
-| 266×160 | 62 KB | 1.22 MB/s | 可行 |
-| 320×192 | 90 KB | 1.76 MB/s | 接近上限 |
-| 400×240 | 141 KB | 2.75 MB/s | 超出 |
-
-**待办：相机开机后部署 `nx-daemon-raw` 并实测帧率**（预期 266×160 可达 ~30fps）。
+这条路径**不依赖 MFC 固件**、**不碰系统分区**、**不需要 WiFi 遥控模式**。
+可以在我们的 daemon 里直接调用 `libs264`（或起 gst 子进程），
+把取景 NV12 编成 H.264 Annex-B 推给客户端，Android 端用 MediaCodec 硬解。
