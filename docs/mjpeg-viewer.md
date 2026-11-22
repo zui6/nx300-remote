@@ -99,3 +99,45 @@ JPEG 请求会挂死（见下），这是目前唯一的硬坎。
 - 已排除：常驻 JPEG 压缩器（改回每帧 create/destroy 后仍挂死）
 
 **因此当前方案刻意不改 daemon，只做外挂代理。**
+
+## 开机自启（2026-11-22 追加）
+
+`camera/autoexec.sh` 里新增第 3 段，在 `exit 0` 之前：
+
+```sh
+if [ -x /mnt/mmc/mjpeg_proxy ] && [ ! -e /mnt/mmc/mjpeg_proxy.DISABLED ]; then
+    (
+        sleep 4
+        cd /mnt/mmc
+        exec ./mjpeg_proxy 8081 3 70 0 80
+    ) >/tmp/mjpeg_proxy.log 2>&1 &
+fi
+```
+
+设计考虑：
+
+- **只追加，不动前两段**（nx-remote-controller 和 nx300m-mod 的启动逻辑原样保留）
+- `-x` 判断 + `DISABLED` 标志文件，想临时关掉只需 `touch /mnt/mmc/mjpeg_proxy.DISABLED`
+- 整个块放进后台子 shell，代理起不来也不影响开机
+- `sleep 4` 等 daemon 完成 mmap
+
+验证（重启后）：
+
+```
+uptime=97s
+daemon=370  proxy=594
+mjpeg_proxy: :8081 -> daemon:80 scale=3 q=70 fps=0
+:8081  166 帧 = 33.1 fps, 140.1 KB/s
+params=200  jpeg=200 4287B      # 原接口未受影响
+```
+
+### 踩坑：FAT 上 `mv` 换文件可能不落盘
+
+第一次是用 `mv -f autoexec.sh.new autoexec.sh` 安装的，命令内 `sync` 过，
+回读也是新内容，但**重启后文件又变回旧版**（时间戳还是原来的）。
+
+改成 `cat autoexec.new.sh > autoexec.sh` 再 `sync` 两次，才真正持久化。
+
+在 FAT 分区上改开机脚本，**务必回读 + 重启确认**，别信 `ls` 的即时结果。
+
+回滚：`cp -f /mnt/mmc/autoexec.sh.bak-mjpeg /mnt/mmc/autoexec.sh`
