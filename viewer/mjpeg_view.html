@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NX300 取景器</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #0d0f12; color: #d8dee6;
+    font-family: "Microsoft YaHei", system-ui, sans-serif;
+    overflow: hidden;
+  }
+  #wrap {
+    display: flex; flex-direction: column; align-items: center;
+    height: 100%; justify-content: center;
+  }
+  #stage {
+    position: relative; flex: 1 1 auto; width: 100%;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+  }
+  #view {
+    max-width: 100%; max-height: 100%;
+    background: #000; border-radius: 4px;
+  }
+  #bar {
+    flex: 0 0 auto; height: 64px; width: 100%;
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    font-size: 14px; color: #8b96a5;
+    background: #12151a; border-top: 1px solid #1d2229;
+  }
+  button {
+    background: #1b2027; color: #cfd6df; border: 1px solid #2a323c;
+    padding: 7px 16px; border-radius: 5px; cursor: pointer;
+    font-size: 14px; transition: .15s;
+  }
+  button:hover { background: #232a33; border-color: #3a4552; }
+  button.on { background: #29d17a; color: #08120c; border-color: #29d17a; font-weight: 700; }
+  #fps {
+    min-width: 92px; text-align: center;
+    font-variant-numeric: tabular-nums;
+    color: #29d17a; font-weight: 700; font-size: 15px;
+  }
+  #info { color: #5c6675; font-size: 13px; }
+  .sep { width: 1px; height: 22px; background: #232a33; margin: 0 4px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="stage"><img id="view" alt=""></div>
+  <div id="bar">
+    <span id="fps">— fps</span>
+    <div class="sep"></div>
+    <button id="b-uhq" onclick="pick(1,70,'800×480','b-uhq')">超清 800×480</button>
+    <button id="b-hq" onclick="pick(2,85,'400×240','b-hq')">高清 400×240</button>
+    <button id="b-lq" onclick="pick(3,70,'266×160','b-lq')">流畅 266×160</button>
+    <div class="sep"></div>
+    <span id="info">连接中…</span>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+var CAM  = "192.168.1.142";
+var view = document.getElementById("view");
+var fpsEl = document.getElementById("fps");
+var infoEl = document.getElementById("info");
+
+var PORT = 8081;                       // 单 proxy，画质由 ?scale= 决定
+var state = { scale: 3, q: 70, label: "", frames: 0, gen: 0 };
+var fpsTimer = null;
+
+/* ---------- 选择画质档 ---------- */
+function pick(scale, q, label, btnId) {
+  state.q = q;
+  state.scale = scale;
+  state.label = label;
+  state.gen++;                       // 让旧的读取循环自己退出
+  var gen = state.gen;
+
+  document.querySelectorAll("button").forEach(function (b) {
+    b.classList.remove("on");
+  });
+  document.getElementById(btnId).classList.add("on");
+
+  state.frames = 0;
+  fpsEl.textContent = "— fps";
+  infoEl.textContent = "连接 " + label + " ...";
+
+  clearInterval(fpsTimer);
+  fpsTimer = setInterval(function () {
+    fpsEl.textContent = state.frames + " fps";
+    state.frames = 0;
+  }, 1000);
+
+  pull(gen);
+}
+
+/* ---------- 长连接读取 multipart，逐帧解码 ---------- */
+function pull(gen) {
+  var ctrl = new AbortController();
+  var url = "http://" + CAM + ":" + PORT + "/?scale=" + state.scale + "&q=" + (state.q || 70) + "&t=" + Date.now();
+  var BOUNDARY = strBytes("--frame");
+
+  fetch(url, { signal: ctrl.signal, cache: "no-store" })
+    .then(function (res) {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      infoEl.textContent = state.label + " · " + CAM + ":" + PORT;
+      var reader = res.body.getReader();
+      var buf = new Uint8Array(0);
+
+      function pump() {
+        return reader.read().then(function (r) {
+          if (gen !== state.gen) { ctrl.abort(); return; }
+          if (r.done) throw new Error("流结束");
+
+          var chunk = r.value;
+          var nb = new Uint8Array(buf.length + chunk.length);
+          nb.set(buf, 0); nb.set(chunk, buf.length);
+          buf = nb;
+
+          for (;;) {
+            var frame = takeFrame(buf, BOUNDARY);
+            if (!frame) break;
+            buf = frame.rest;
+            render(frame.jpeg);
+          }
+          if (buf.length > 4 * 1024 * 1024) buf = buf.slice(buf.length - 65536);
+
+          return pump();
+        });
+      }
+      return pump();
+    })
+    .catch(function (e) {
+      if (gen !== state.gen) return;
+      infoEl.textContent = "连接中断：" + e.message + "，2 秒后重试";
+      fpsEl.textContent = "— fps";
+      setTimeout(function () { if (gen === state.gen) pull(gen); }, 2000);
+    });
+}
+
+function strBytes(s) {
+  var a = new Uint8Array(s.length);
+  for (var i = 0; i < s.length; i++) a[i] = s.charCodeAt(i);
+  return a;
+}
+
+function indexOfBytes(hay, needle, from) {
+  var n = needle.length;
+  outer:
+  for (var i = from || 0; i <= hay.length - n; i++) {
+    for (var j = 0; j < n; j++) {
+      if (hay[i + j] !== needle[j]) continue outer;
+    }
+    return i;
+  }
+  return -1;
+}
+
+/* 从缓冲里切出一帧；不够一帧就返回 null */
+function takeFrame(buf, boundary) {
+  var b = indexOfBytes(buf, boundary, 0);
+  if (b < 0) return null;
+
+  var hdrEnd = indexOfBytes(buf, strBytes("\r\n\r\n"), b);
+  if (hdrEnd < 0) return null;
+
+  var head = "";
+  for (var i = b; i < hdrEnd; i++) head += String.fromCharCode(buf[i]);
+  var m = /content-length:\s*(\d+)/i.exec(head);
+  if (!m) return { jpeg: null, rest: buf.slice(hdrEnd + 4) };
+
+  var len = parseInt(m[1], 10);
+  var start = hdrEnd + 4;
+  if (buf.length < start + len) return null;
+
+  return { jpeg: buf.subarray(start, start + len), rest: buf.slice(start + len) };
+}
+
+/* 用浏览器原生 <img> 解码：比 createImageBitmap + canvas 快得多。
+   只保留最新一帧，解码跟不上时丢掉中间帧。 */
+var pendingFrame = null, decoding = false, lastUrl = null;
+
+function render(bytes) {
+  if (!bytes || !bytes.length) return;
+  pendingFrame = bytes;
+  if (decoding) return;
+  drain();
+}
+
+function drain() {
+  if (!pendingFrame) { decoding = false; return; }
+  var bytes = pendingFrame;
+  pendingFrame = null;
+  decoding = true;
+
+  var url = URL.createObjectURL(new Blob([bytes], { type: "image/jpeg" }));
+  view.onload = function () {
+    if (lastUrl) URL.revokeObjectURL(lastUrl);
+    lastUrl = url;
+    state.frames++;
+    drain();
+  };
+  view.onerror = function () {
+    URL.revokeObjectURL(url);
+    drain();
+  };
+  view.src = url;
+}
+
+/* 默认开流畅档 */
+pick(3, 70, "266×160", "b-lq");
+</script>
+</body>
+</html>

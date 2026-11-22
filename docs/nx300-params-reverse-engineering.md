@@ -835,3 +835,109 @@ http://<相机IP>:7679/livestream.avi     640×480, AVI + H.264
 
 固件自己用硬件编码，零 CPU、约 100 ms 延迟，不需要碰任何底层接口。
 限制是必须先让相机切到那个模式。
+## 突破：硬件/NEON H.264 编码器可用（2026-11-22）
+
+### 之前判断错误的地方
+
+早期结论「`savsenc_h264` 只认高通平台」是**错的**。
+`libs264.so` 里的 `s264_init()` 把 `/proc/cpuinfo` 的 `Hardware` 行
+和一张 **30 项**平台表做 `strstr` 比对，表里有多项三星平台：
+
+```
+[ 2] 'Samsung-DRIMeIV-ES'    ← 关键
+[ 5] 'SMDK4412'   [ 6] 'SMDK4212'
+[ 7] 'SLP10_C210'  [14] 'UNIVERSAL_C210'   ...
+```
+
+而相机实际的 Hardware 行是：
+
+```
+Hardware        : Samsung-DRIMeIV-NX300
+```
+
+`strstr("Samsung-DRIMeIV-NX300", "Samsung-DRIMeIV-ES")` **不匹配**，
+整张表扫完没命中 → 返回 `0xfffff830`（-2000）。**只差产品后缀 `-ES` vs `-NX300`。**
+
+### 修复方式（不写系统分区）
+
+把 `libs264.so` 里的 `Samsung-DRIMeIV-ES`（18 字节）等长改成
+`Samsung-DRIMeIV-NX`（18 字节），放在 SD 卡 `tmpbin/`，
+运行时用 `LD_LIBRARY_PATH` 覆盖：
+
+```sh
+export LD_LIBRARY_PATH=/mnt/mmc/tmpbin
+export GST_PLUGIN_PATH=/usr/lib/gstreamer-0.10
+export GST_REGISTRY=/tmp/gst.reg
+gst-launch-0.10 videotestsrc num-buffers=30 \
+  ! video/x-raw-yuv,format=\(fourcc\)I420,width=640,height=480,framerate=30/1 \
+  ! savsenc_h264 ! filesink location=/mnt/mmc/out.h264
+```
+
+### 验证结果
+
+码流结构完全合法（30 帧）：
+
+```
+SPS 1  PPS 1  IDR 1  非IDR片 29
+```
+
+### 性能实测（120 帧，含 videotestsrc 开销）
+
+| 分辨率 | 耗时 | 帧率 |
+|---|---|---|
+| 320×240 | 4 s | **30 fps** |
+| 480×360 | 8 s | 15 fps |
+| 640×480 | 13 s | 9.2 fps |
+
+随分辨率线性变化 → 是 **CPU 上的 NEON 软件编码**（不是 MFC）。
+即使如此，320×240 的 30fps 也比现有 JPEG 路径（400×240 约 14fps）快一倍。
+
+### 编码器可调参数
+
+```
+bitrate      0 = 不控码率
+quantizer    1-51，默认 14
+qmin/qmax    1-51
+idr-size     IDR 间隔，默认 30
+slice-mode   0/1/2
+```
+
+### 意义
+
+这条路径**不依赖 MFC 固件**、**不碰系统分区**、**不需要 WiFi 遥控模式**。
+可以在我们的 daemon 里直接调用 `libs264`（或起 gst 子进程），
+把取景 NV12 编成 H.264 Annex-B 推给客户端，Android 端用 MediaCodec 硬解。
+### H.264 编码器实测补充（真实取景帧）
+
+**编码器只认 I420，不认 SN12**（虽然 pad 模板里列了 SN12）。
+用 SN12 送入会在 `CreateH264Encoder` 阶段失败：`Fail to create handle of s264 encoder:[-102]`。
+所以送帧前必须把相机取景的 NV12 拆成 I420（UV 平面分离，开销很小）。
+
+**测量时必须扣掉 gst 启动开销**：每次 `gst-launch` 启动约 3 秒，
+直接计总时长会严重低估编码速度。
+
+400×240 真实取景帧、40 帧：
+
+| 项目 | 耗时 |
+|---|---|
+| 纯 I/O（filesrc → fakesink，读 5.76 MB） | 1 s |
+| filesrc → savsenc_h264 → fakesink | 2 s |
+| **编码实际耗时** | **约 1 s = 40 fps（25 ms/帧）** |
+
+码率（连续静态画面，帧间预测收益极大）：
+
+| quantizer | 40 帧总大小 | 每帧 |
+|---|---|---|
+| 26 | 18,985 B | 475 B |
+| 32 | 8,571 B | 214 B |
+
+对比：同样 400×240 的 JPEG q70 约 9 KB/帧。**H.264 小 20 倍以上，编码还更快。**
+
+码流结构合法：SPS 1 / PPS 1 / IDR 2 / P 帧 38 = 40 帧。
+
+**注意**：`quantizer` 属性只有在 `auto-setting=false` 时才生效，否则用内置默认值。
+
+### 结论
+
+取景 H.264 在 400×240 上可做到 **编码 40fps、静态场景 0.5KB/帧**，
+明显优于现有 JPEG 路径（14fps、9KB/帧）。

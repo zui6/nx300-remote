@@ -22,6 +22,23 @@ from PIL import Image, ImageTk
 
 PREVIEW_W, PREVIEW_H = 800, 480
 
+import numpy as np
+
+
+def nv12_to_image(buf, w, h):
+    """NV12 -> PIL RGB（向量化）"""
+    y = np.frombuffer(buf, dtype=np.uint8, count=w * h).reshape(h, w).astype(np.float32)
+    uv = np.frombuffer(buf, dtype=np.uint8, offset=w * h,
+                       count=w * h // 2).reshape(h // 2, w // 2, 2).astype(np.float32)
+    u = np.repeat(np.repeat(uv[:, :, 0], 2, axis=0), 2, axis=1)
+    v = np.repeat(np.repeat(uv[:, :, 1], 2, axis=0), 2, axis=1)
+    yy = (y - 16.0) * 1.164
+    r = yy + 1.596 * (v - 128.0)
+    g = yy - 0.813 * (v - 128.0) - 0.391 * (u - 128.0)
+    b = yy + 2.018 * (u - 128.0)
+    rgb = np.clip(np.stack([r, g, b], axis=-1), 0, 255).astype(np.uint8)
+    return Image.fromarray(rgb)
+
 PRESETS = {
     0: ("流畅", 70, 3),
     1: ("标准", 70, 2),
@@ -65,6 +82,9 @@ class Viewer:
     def __init__(self, host, preset):
         self.host = host
         self.preset = preset
+        self.use_raw = False
+        self.raw_w = 0
+        self.raw_h = 0
         self.paused = False
         self.running = True
         self.conn = None
@@ -96,7 +116,7 @@ class Viewer:
 
         self.keys = tk.Label(
             self.root,
-            text="1/2/3 画质 · 点击设对焦点 · F 对焦框 · 空格暂停 · ESC 退出",
+            text="1/2/3 画质 · 点击对焦 · F 对焦框 · R 原始YUV · 空格暂停 · ESC 退出",
             bg="#101014", fg="#555566", font=("Consolas", 10))
         self.keys.pack(fill="x", padx=8, pady=(0, 6))
 
@@ -121,15 +141,28 @@ class Viewer:
         if self.conn is None:
             self.connect()
         name, q, scale = PRESETS[self.preset]
-        path = "/api/v1/liveview/jpeg?q=%d&scale=%d" % (q, scale)
+        if self.use_raw:
+            path = "/api/v1/liveview/raw?scale=%d" % scale
+        else:
+            path = "/api/v1/liveview/jpeg?q=%d&scale=%d" % (q, scale)
         t0 = time.time()
         try:
             self.conn.request("GET", path)
-            data = self.conn.getresponse().read()
+            resp = self.conn.getresponse()
+            data = resp.read()
+            w = resp.getheader("X-NX-Width")
+            if w:
+                self.raw_w = int(w)
+                self.raw_h = int(resp.getheader("X-NX-Height") or 0)
         except Exception:
             self.connect()
             self.conn.request("GET", path)
-            data = self.conn.getresponse().read()
+            resp = self.conn.getresponse()
+            data = resp.read()
+            w = resp.getheader("X-NX-Width")
+            if w:
+                self.raw_w = int(w)
+                self.raw_h = int(resp.getheader("X-NX-Height") or 0)
         return data, time.time() - t0
 
     def fetch_af(self):
@@ -168,7 +201,15 @@ class Viewer:
             except Exception:
                 time.sleep(0.2)
                 continue
-            if data and data[:2] == b"\xff\xd8":
+            raw_ok = bool(data) and self.use_raw and self.raw_w and self.raw_h
+            if raw_ok:
+                # 原始 NV12：本地转 RGB（优先判断，避免和 JPEG 魔数混淆）
+                self.stats.tick(len(data), dt)
+                try:
+                    self.last = nv12_to_image(data, self.raw_w, self.raw_h)
+                except Exception:
+                    self.stats.dropped += 1
+            elif data and data[:2] == b"\xff\xd8":
                 self.stats.tick(len(data), dt)
                 try:
                     self.last = Image.open(io.BytesIO(data)).convert("RGB")
@@ -196,6 +237,7 @@ class Viewer:
         name = PRESETS[self.preset][0]
         afname = {0: "选择AF", 1: "多重AF", 2: "脸部侦测", 3: "自拍AF"}.get(self.af_area, "?")
         extra = ("  " + afname) if self.af_area >= 0 else ""
+        extra += ("  RAW" if self.use_raw else "  JPEG")
         if self.paused:
             extra += "  [暂停]"
         self.info.config(
@@ -248,6 +290,10 @@ class Viewer:
             self.preset = int(ev.char) - 1
         elif ev.char and ev.char in ("f", "F"):
             self.show_af = not self.show_af
+        elif ev.char and ev.char in ("r", "R"):
+            self.use_raw = not self.use_raw
+            self.raw_w = 0
+            self.raw_h = 0
         elif ev.keysym == "space":
             self.paused = not self.paused
 

@@ -176,6 +176,9 @@ static void handle_liveview_api(struct mg_connection *nc,
         if (scale < 1) scale = 1;
         if (scale > 4) scale = 4;
         liveview_http_send_jpeg(nc, q, scale, query_int(hm, "rng", 0));
+    } else if (mg_vcmp(func, "raw") == 0) {
+        int scale = query_int(hm, "scale", 3);
+        liveview_http_send_raw(nc, scale);
     } else {
         /* 未知接口必须回包，否则客户端会一直等（mongoose 单线程，会拖死其它请求） */
         mg_printf(nc, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
