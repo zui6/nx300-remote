@@ -20,7 +20,7 @@
     display: flex; align-items: center; justify-content: center;
     overflow: hidden;
   }
-  canvas {
+  #view {
     max-width: 100%; max-height: 100%;
     background: #000; border-radius: 4px;
   }
@@ -48,12 +48,13 @@
 </head>
 <body>
 <div id="wrap">
-  <div id="stage"><canvas id="cvs"></canvas></div>
+  <div id="stage"><img id="view" alt=""></div>
   <div id="bar">
     <span id="fps">— fps</span>
     <div class="sep"></div>
-    <button id="b-hq" onclick="pick(2,'400×240','b-hq')">高清 400×240</button>
-    <button id="b-lq" onclick="pick(3,'266×160','b-lq')">流畅 266×160</button>
+    <button id="b-uhq" onclick="pick(1,70,'800×480','b-uhq')">超清 800×480</button>
+    <button id="b-hq" onclick="pick(2,85,'400×240','b-hq')">高清 400×240</button>
+    <button id="b-lq" onclick="pick(3,70,'266×160','b-lq')">流畅 266×160</button>
     <div class="sep"></div>
     <span id="info">连接中…</span>
   </div>
@@ -63,17 +64,17 @@
 "use strict";
 
 var CAM  = "192.168.1.142";
-var cvs  = document.getElementById("cvs");
-var ctx  = cvs.getContext("2d", { alpha: false });
+var view = document.getElementById("view");
 var fpsEl = document.getElementById("fps");
 var infoEl = document.getElementById("info");
 
 var PORT = 8081;                       // 单 proxy，画质由 ?scale= 决定
-var state = { scale: 3, label: "", frames: 0, gen: 0 };
+var state = { scale: 3, q: 70, label: "", frames: 0, gen: 0 };
 var fpsTimer = null;
 
 /* ---------- 选择画质档 ---------- */
-function pick(scale, label, btnId) {
+function pick(scale, q, label, btnId) {
+  state.q = q;
   state.scale = scale;
   state.label = label;
   state.gen++;                       // 让旧的读取循环自己退出
@@ -100,7 +101,7 @@ function pick(scale, label, btnId) {
 /* ---------- 长连接读取 multipart，逐帧解码 ---------- */
 function pull(gen) {
   var ctrl = new AbortController();
-  var url = "http://" + CAM + ":" + PORT + "/?scale=" + state.scale + "&t=" + Date.now();
+  var url = "http://" + CAM + ":" + PORT + "/?scale=" + state.scale + "&q=" + (state.q || 70) + "&t=" + Date.now();
   var BOUNDARY = strBytes("--frame");
 
   fetch(url, { signal: ctrl.signal, cache: "no-store" })
@@ -179,21 +180,39 @@ function takeFrame(buf, boundary) {
   return { jpeg: buf.subarray(start, start + len), rest: buf.slice(start + len) };
 }
 
+/* 用浏览器原生 <img> 解码：比 createImageBitmap + canvas 快得多。
+   只保留最新一帧，解码跟不上时丢掉中间帧。 */
+var pendingFrame = null, decoding = false, lastUrl = null;
+
 function render(bytes) {
   if (!bytes || !bytes.length) return;
-  var blob = new Blob([bytes], { type: "image/jpeg" });
-  createImageBitmap(blob).then(function (bmp) {
-    if (cvs.width !== bmp.width || cvs.height !== bmp.height) {
-      cvs.width = bmp.width; cvs.height = bmp.height;
-    }
-    ctx.drawImage(bmp, 0, 0);
-    bmp.close();
+  pendingFrame = bytes;
+  if (decoding) return;
+  drain();
+}
+
+function drain() {
+  if (!pendingFrame) { decoding = false; return; }
+  var bytes = pendingFrame;
+  pendingFrame = null;
+  decoding = true;
+
+  var url = URL.createObjectURL(new Blob([bytes], { type: "image/jpeg" }));
+  view.onload = function () {
+    if (lastUrl) URL.revokeObjectURL(lastUrl);
+    lastUrl = url;
     state.frames++;
-  }).catch(function () { /* 个别帧损坏就跳过 */ });
+    drain();
+  };
+  view.onerror = function () {
+    URL.revokeObjectURL(url);
+    drain();
+  };
+  view.src = url;
 }
 
 /* 默认开流畅档 */
-pick(3, "266×160", "b-lq");
+pick(3, 70, "266×160", "b-lq");
 </script>
 </body>
 </html>
