@@ -377,3 +377,27 @@ void liveview_http_send_ui_jpeg(struct mg_connection *nc, int quality, int scale
 fail:
     mg_printf(nc, "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n");
 }
+
+/* ---- MJPEG 长连接推流：供 api_server 在 MG_EV_POLL 里逐帧调用 ---- */
+int liveview_encode_jpeg(int quality, int scale,
+                         unsigned char **out, unsigned long *outlen)
+{
+    int fw, fh, fsz;
+    unsigned char *buf = NULL;
+    unsigned long len = 0;
+
+    if (out == NULL || outlen == NULL)
+        return -1;
+
+    liveview_get(false, &fw, &fh, &fsz);
+    if (s_nv12_mem == NULL)
+        return -1;
+
+    if (jpeg_nv12_encode(s_nv12_mem, fw, fh, quality, scale, 0, &buf, &len) != 0 ||
+        buf == NULL)
+        return -1;
+
+    *out = buf;
+    *outlen = len;
+    return 0;
+}

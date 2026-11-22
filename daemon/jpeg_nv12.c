@@ -212,14 +212,12 @@ int jpeg_nv12_encode(const unsigned char *nv12, int width, int height,
     *out = NULL;
     *out_len = 0;
 
-    /* 压缩器只建一次 */
-    if (!s_cinfo_ready) {
-        s_cinfo.err = jpeg_std_error(&s_jerr.pub);
-        s_jerr.pub.error_exit = nx_error_exit;
-        s_jerr.pub.output_message = nx_output_message;
-        jpeg_create_compress(&s_cinfo);
-        s_cinfo_ready = 1;
-    }
+    /* 每帧独立创建压缩器：常驻复用会在出错后残留状态，实测会导致请求挂死。 */
+    s_cinfo.err = jpeg_std_error(&s_jerr.pub);
+    s_jerr.pub.error_exit = nx_error_exit;
+    s_jerr.pub.output_message = nx_output_message;
+    jpeg_create_compress(&s_cinfo);
+    s_cinfo_ready = 0;
     s_dst.pub.init_destination = nx_dst_init;
     s_dst.pub.empty_output_buffer = nx_dst_empty;
     s_dst.pub.term_destination = nx_dst_term;
@@ -273,6 +271,8 @@ int jpeg_nv12_encode(const unsigned char *nv12, int width, int height,
     /* 输出在内部缓冲里，调用者不要 free */
     *out = s_out;
     *out_len = s_dst.len;
+
+    jpeg_destroy_compress(cinfo);
 
     return (s_dst.len > 0) ? 0 : -1;
 }

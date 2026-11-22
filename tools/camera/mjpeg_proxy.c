@@ -194,8 +194,7 @@ int main(int argc, char **argv)
     if (g_scale > 4) g_scale = 4;
     if (g_quality < 10) g_quality = 10;
     if (g_quality > 95) g_quality = 95;
-    if (g_fps < 1) g_fps = 1;
-    if (g_fps > 30) g_fps = 30;
+    if (g_fps < 0) g_fps = 0;      /* 0 = 不限速：能推多快推多快 */
 
     /* 客户端断开时 send() 会触发 SIGPIPE，默认直接杀死进程 */
     signal(SIGPIPE, SIG_IGN);
@@ -214,7 +213,7 @@ int main(int argc, char **argv)
     fprintf(stderr, "mjpeg_proxy: :%d default scale=%d q=%d fps=%d\n",
             port, g_scale, g_quality, g_fps);
 
-    interval = 1.0 / g_fps;
+    interval = g_fps > 0 ? 1.0 / g_fps : 0.0;
     next_t = now_sec();
 
     for (;;) {
@@ -293,7 +292,7 @@ int main(int argc, char **argv)
                     g_scale, g_quality);
         }
 
-        {
+        if (interval > 0) {
             double t = now_sec();
             if (t < next_t) {
                 usleep((useconds_t) ((next_t - t) * 1000000));
